@@ -40,9 +40,9 @@ npm install -g @earendil-works/pi-coding-agent@1.5.2
 python -m evolveengine.spark_worker --hash-model /opt/models/qwen3-0.6b-pinned
 python -m evolveengine hash-config .evolveengine/spark-worker.json
 python -m evolveengine make-token-ids --tokenizer /path/to/qwen/tokenizer.json --output .evolveengine/token-ids.json
-python -m evolveengine new-seal-key .evolveengine/seal.key
-python -m evolveengine preflight --config .evolveengine/controller.json --salt-file .evolveengine/seal.key --node spark-1 --output .evolveengine/one-node-preflight.json
-python -m evolveengine optimize --config .evolveengine/controller.json --salt-file .evolveengine/seal.key --node spark-1 --preflight-receipt .evolveengine/one-node-preflight.json --steps 2 --output .evolveengine/p1
+python -m evolveengine new-seal-key .evolveengine/development.key
+python -m evolveengine preflight --config .evolveengine/controller.json --salt-file .evolveengine/development.key --node spark-1 --output .evolveengine/one-node-preflight.json
+python -m evolveengine optimize --config .evolveengine/controller.json --salt-file .evolveengine/development.key --node spark-1 --preflight-receipt .evolveengine/one-node-preflight.json --steps 2 --output .evolveengine/p1
 ```
 
 在权重所在主机执行模型哈希命令。若控制器在 Windows 上，可用 `["node","固定版本 Pi 的 dist/bundle/cli.js 绝对路径"]` 配置 `pi_command`。预检核对 Pi 版本、DeepSeek 元数据与实际用量，以及 Spark UUID、镜像、模型资产、运行时版本、独立参考质量门、Profiler 和 E0 两次测量。更换镜像、模型、Kernel 或协议参数后重新预检。
@@ -55,13 +55,25 @@ Spark 测量使用 mini-sglang 原生 LLM 路径。客户端每次提交一条 t
 
 四个节点预检全部通过后运行一对。D/C 建库和终评单列成本，D 的策略续跑计入对应 Evolving 组。每台 Spark 通过本地租约独占加速器。同一检查点的两臂复用首轮输入，并各自结算逻辑费用。
 
+裁判先在自己的权限范围内生成 Q/T 私钥，把命令输出的 `commitment` 登记为 `FINAL_KEY_COMMITMENT`。开发控制器只接收这个哈希。
+
 ```sh
-python -m evolveengine preflight --config .evolveengine/controller.json --salt-file .evolveengine/seal.key --output .evolveengine/four-node-preflight.json
-python -m evolveengine pilot --config .evolveengine/controller.json --salt-file .evolveengine/seal.key --preflight-receipt .evolveengine/four-node-preflight.json --replicate 0 --output .evolveengine/pilot-0
-python -m evolveengine summarize .evolveengine/pilot-0/report.json
+python -m evolveengine new-seal-key .evolveengine/judge/qt.key
 ```
 
-默认在一个 C 检查点做先导配对续跑。`--causal-points 3` 使用早、中、晚三个检查点，`--ablation` 加跑关闭跨会话 Memory 的两组。增加独立 `--replicate` 编号和新输出目录会轮换节点职责与执行顺序。`summarize` 将同谱系的 C 结果聚合为一个统计单位，给出每对对数差、区间和失败数。
+```sh
+python -m evolveengine preflight --config .evolveengine/controller.json --salt-file .evolveengine/development.key --output .evolveengine/four-node-preflight.json
+python -m evolveengine pilot --config .evolveengine/controller.json --salt-file .evolveengine/development.key --final-commitment "$FINAL_KEY_COMMITMENT" --preflight-receipt .evolveengine/four-node-preflight.json --replicate 0 --output .evolveengine/pilot-0
+```
+
+`pilot` 先封存主链、C 续跑和可选消融提交，写出 `sealed_submission.json` 和开发阶段的 `report.json`。将封存包传给裁判，并独立登记命令输出的 `submission_digest` 为 `SUBMISSION_DIGEST`。裁判使用相同的控制器配置和 token 清单、原先登记的提交哈希，以及私有 Q/T 密钥。裁判进程只运行质量门与计时，不需要开发账本、Pi 或 DeepSeek 凭据。
+
+```sh
+python -m evolveengine evaluate --config .evolveengine/controller.json --submission .evolveengine/pilot-0/sealed_submission.json --submission-digest "$SUBMISSION_DIGEST" --final-salt-file .evolveengine/judge/qt.key --output .evolveengine/judge/pilot-0
+python -m evolveengine summarize .evolveengine/judge/pilot-0/sealed_evaluation.json
+```
+
+默认在一个 C 检查点做先导配对续跑。`--causal-points 3` 使用早、中、晚三个检查点，`--ablation` 加跑关闭跨会话 Memory 的两组。增加独立 `--replicate` 编号和新输出目录会轮换节点职责与执行顺序。开发报告和裁判报告都记录同一个提交哈希。裁判报告含吞吐及 TTFT/TPOT 分位数。`summarize` 将同谱系的 C 结果聚合为一个统计单位，给出每对对数差、区间和失败数。
 
 已验证 P0 闭环、真实 Pi CLI 对本地流式 API 的计量和工具限制、mini-sglang Git 快照及数值比较函数。Spark 预检、真实 DeepSeek 请求、CUDA Kernel、权重执行与多节点先导需要目标环境实测。
 

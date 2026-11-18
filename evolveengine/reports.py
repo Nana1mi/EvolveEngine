@@ -1,7 +1,7 @@
 """Compare sealed experiment replicates, with one statistical unit per lineage."""
 
 import math
-from statistics import mean, median, stdev
+from statistics import mean, median, quantiles, stdev
 
 from .schema import Cost
 
@@ -77,6 +77,18 @@ def process_metrics(prefix, attempts, events, ledger):
             "replayed_pool_count": len(replay_rows),
             "first_choice_flip_rate": (mean(row["first_choice_changed"] for row in replay_rows)
                                        if replay_rows else None)}
+
+
+def latency_metrics(requests):
+    result = {}
+    for name in ("ttft", "tpot"):
+        samples = [row.get(name + "_seconds") for row in requests]
+        milliseconds = [value * 1000 for value in samples
+                        if type(value) in (float, int) and math.isfinite(value) and value >= 0]
+        if milliseconds:
+            point = milliseconds[0] if len(milliseconds) == 1 else quantiles(milliseconds, n=20, method="inclusive")[-1]
+            result[name] = {"n": len(milliseconds), "p50": median(milliseconds), "p95": point}
+    return result
 
 
 def summarize(reports):

@@ -8,8 +8,8 @@ from evolveengine.partitions import Partitions, load_bank
 
 class PartitionTests(unittest.TestCase):
     def test_roles_and_private_salt(self):
-        left = Partitions(3, b"a" * 32)
-        right = Partitions(3, b"b" * 32)
+        left = Partitions(3, b"a" * 32, final_salt=b"c" * 32)
+        right = Partitions(3, b"b" * 32, final_salt=b"d" * 32)
         for role, pool in (("search", "T"), ("updater", "D"), ("development", "C"),
                            ("causal", "Q"), ("admission", "Q")):
             with self.assertRaises(PermissionError):

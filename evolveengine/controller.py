@@ -113,12 +113,13 @@ class Controller:
         return {**prepared, "pool": pool, "pool_digest": pool_digest, "observation": observation,
                 "memory": memory, "failure": "empty_pool" if not pool else None}
 
-    def measure(self, lane, key, engine, block):
+    def measure(self, lane, key, engine, block, *, include_requests=False):
         result = self._operate(lane, key, "measure", {"engine": engine, "block": block})
         if result.status != "ok":
             return None
         try:
-            return throughput(result.data, block)
+            rate = throughput(result.data, block)
+            return (rate, result.data["requests"]) if include_requests else rate
         except (ValueError, KeyError, TypeError):
             return None
 

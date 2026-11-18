@@ -6,9 +6,10 @@ import statistics
 
 from .controller import Controller, Lane
 from .engine import gate, compare_rates
-from .partitions import load_bank
-from .reports import process_metrics
-from .schema import Checkpoint, Cost, digest
+from .journal import InsufficientBudget
+from .partitions import load_bank, valid_digest
+from .reports import latency_metrics, process_metrics
+from .schema import Checkpoint, Cost, canonical, digest
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,8 @@ def final_comparison(controller, lane, key, reference, submissions, protocol):
             output[label] = {"status": "fallback_quality", "speedup": 1.0}
             continue
         ratios = []
+        candidate_requests = []
+        reference_requests = []
         for block_index in range(protocol.final_blocks):
             block = controller.partitions.block("final", "T", f"{name}/{block_index}", protocol.final_count)
             order = (["reference", "candidate", "candidate", "reference"]
@@ -86,8 +89,12 @@ def final_comparison(controller, lane, key, reference, submissions, protocol):
             rates = {"reference": [], "candidate": []}
             for index, side in enumerate(order):
                 engine = engines["reference"] if side == "reference" else candidate
-                rates[side].append(controller.measure(lane, f"{key}/perf/{label}/{block_index}/{index}",
-                                                      engine, block))
+                observed = controller.measure(lane, f"{key}/perf/{label}/{block_index}/{index}",
+                                              engine, block, include_requests=True)
+                rates[side].append(None if observed is None else observed[0])
+                if observed is not None:
+                    rows = reference_requests if side == "reference" else candidate_requests
+                    rows.extend(observed[1])
             if any(rate is None for rate in rates["reference"]):
                 return {"status": "invalid_reference_measurement"}
             if any(rate is None for rate in rates["candidate"]):
@@ -97,7 +104,8 @@ def final_comparison(controller, lane, key, reference, submissions, protocol):
                                         statistics.harmonic_mean(rates["candidate"])))
         if len(ratios) == protocol.final_blocks:
             output[label] = {"status": "valid", "speedup": math.exp(statistics.mean(ratios)),
-                             "paired_log_ratios": ratios}
+                             "paired_log_ratios": ratios, "latency_ms": latency_metrics(candidate_requests),
+                             "reference_latency_ms": latency_metrics(reference_requests)}
         else:
             output[label] = {"status": "fallback_performance", "speedup": 1.0}
     result = {"status": "ok", "engines": output, "quality": {key: val.data for key, val in quality.items()}}
@@ -105,12 +113,15 @@ def final_comparison(controller, lane, key, reference, submissions, protocol):
     return result
 
 
-def deploy_pair(journal, backend, partitions, protocol, nodes, replicate, environment, *, causal_points=3,
-                ablation=False):
+def seal_pair(journal, backend, partitions, protocol, nodes, replicate, environment, *, causal_points=3,
+              ablation=False):
     if len(nodes) != 4 or len(set(nodes)) != 4:
         raise ValueError("Four distinct node identities are required for the paired schedule")
     if type(replicate) is not int or replicate < 0:
         raise ValueError("Replicate must be a nonnegative independent lineage number")
+    partitions = partitions.development_view()
+    if partitions.development_commitment is None or partitions.final_commitment is None:
+        raise ValueError("Register both partition commitments before sealing a pair")
     controller = Controller(journal, backend, partitions, environment,
                             epsilon=environment.get("noise_epsilon", 0.002))
     allocation = nodes[replicate % 4:] + nodes[:replicate % 4]
@@ -144,7 +155,7 @@ def deploy_pair(journal, backend, partitions, protocol, nodes, replicate, enviro
         else:
             sealed[lane.owner] = controller.run(lane, start, protocol.main_steps)
     journal.event(f"{run}/sealed", sealed)
-    evaluator = Lane(f"{run}/evaluation", "research_overhead", eval_node, protocol.evaluation)
+    evaluator = Lane(f"{run}/causal", "research_overhead", eval_node, protocol.evaluation)
     journal.begin_scope(evaluator.path)
     h_star = sealed["evolving"]["checkpoint"]["policy_digest"]
     causal_bank = load_bank(journal, "causal", "C", c_bank)
@@ -168,24 +179,65 @@ def deploy_pair(journal, backend, partitions, protocol, nodes, replicate, enviro
                                             controller.baseline, h_star, protocol.causal, protocol.fork_steps,
                                             memory_enabled=False)
             memory_factor.append((checkpoint, empty))
-    rq1 = final_comparison(controller, evaluator, "rq1", start, sealed, protocol)
-    rq2 = [final_comparison(controller, evaluator, f"rq2-{index}", checkpoint, pair, protocol)
-           for index, (checkpoint, pair) in enumerate(causal)]
-    rq3 = [final_comparison(controller, evaluator, f"rq3-{index}", checkpoint, pair, protocol)
-           for index, (checkpoint, pair) in enumerate(memory_factor)]
-    ledger = list(journal.budget_rows())
+    comparisons = {
+        "rq1": _sealed_comparison(start, sealed),
+        "rq2": [_sealed_comparison(checkpoint, pair) for checkpoint, pair in causal],
+        "rq3_memory_off": [_sealed_comparison(checkpoint, pair) for checkpoint, pair in memory_factor],
+    }
+    bundle = journal.get_event(f"{run}/evaluation_input")
+    if bundle is None:
+        sealed_groups = [comparisons["rq1"], *comparisons["rq2"], *comparisons["rq3_memory_off"]]
+        engine_ids = set()
+        for group in sealed_groups:
+            engine_ids.add(group["reference"]["engine_digest"])
+            engine_ids.update(value["checkpoint"]["engine_digest"] for value in group["submissions"].values())
+        consumed = journal.spent(evaluator.path)
+        occupied_wall = journal.wall_elapsed(evaluator.path, consumed)
+        payload = {
+            "schema": "evolveengine.sealed-pair.v1",
+            "run_manifest": manifest,
+            "environment": environment,
+            "comparisons": comparisons,
+            "engines": {address: journal.get("engine", address) for address in sorted(engine_ids)},
+            "remaining_evaluation_budget": _remaining(protocol.evaluation, consumed, occupied_wall).record(),
+        }
+        bundle = {"digest": digest(payload), "payload": payload}
+        journal.event(f"{run}/evaluation_input", bundle)
+    elif canonical(bundle["payload"]["comparisons"]) != canonical(comparisons):
+        raise ValueError("Run attempted to change an already sealed comparison")
+    return bundle, _optimization_report(journal, manifest, sealed, d_starts, causal_bank, d_lane, c_lane,
+                                        evaluator, fixed, evolving, bundle["digest"])
+
+
+def _sealed_comparison(reference, submissions):
+    return {"reference": asdict(reference), "submissions": submissions}
+
+
+def _remaining(limit, spent, wall):
+    return Cost(wall_ms=max(0, limit.wall_ms - wall), node_ms=max(0, limit.node_ms - spent.node_ms),
+                input_tokens=max(0, limit.tokens - spent.tokens), blocks=max(0, limit.blocks - spent.blocks))
+
+
+def _optimization_report(journal, manifest, sealed, d_starts, causal_bank, d_lane, c_lane, evaluator,
+                         fixed, evolving, bundle_digest):
+    # Snapshot this stage independently. A local mock may reuse this journal
+    # afterward, so a resume should still only export optimization receipts.
+    runs = (d_lane.path + "/", c_lane.path + "/", fixed.path + "/", evolving.path + "/", evaluator.path + "/")
+    ledger = [row for row in journal.budget_rows() if row["id"].startswith(runs)]
     physical = {}
     for row in ledger:
         if row["physical"]:
             physical[row["node"]] = physical.get(row["node"], Cost()) + Cost(**row["receipt"]["cost"])
     attempts = journal.objects("experience")
-    events = journal.events("")
+    run_prefix = f'replicate-{manifest["replicate"]}/'
+    events = [event for event in journal.events("")
+              if event["id"].startswith((*runs, run_prefix)) and "/evaluation/" not in event["id"]]
     values = {
         "run_manifest": manifest, "submission": sealed,
         "bank_counts": {"D": len(d_starts), "C": len(causal_bank)},
-        "sealed_evaluation": {"rq1": rq1, "rq2": rq2, "rq3_memory_off": rq3},
+        "submission_digest": bundle_digest,
         "bank_cost": {"D": journal.spent(d_lane.path).record(), "C": journal.spent(c_lane.path).record()},
-        "evaluation_cost": journal.spent(evaluator.path).record(),
+        "causal_cost": journal.spent(evaluator.path).record(),
         "events": events, "budget_ledger": ledger,
         "process_metrics": {lane.owner: process_metrics(lane.path, list(attempts.values()), events, ledger)
                             for lane in (fixed, evolving)},
@@ -194,3 +246,70 @@ def deploy_pair(journal, backend, partitions, protocol, nodes, replicate, enviro
         "memory_registry": journal.objects("memory"), "experience": attempts,
     }
     return values
+
+
+def verify_submission(bundle, expected_digest):
+    if not valid_digest(expected_digest) or bundle.get("digest") != expected_digest:
+        raise ValueError("Sealed submission does not match the registered digest")
+    payload = bundle["payload"]
+    if digest(payload) != expected_digest or payload["schema"] != "evolveengine.sealed-pair.v1":
+        raise ValueError("Sealed submission contents or schema are invalid")
+    return payload
+
+
+def evaluate_pair(journal, backend, partitions, protocol, bundle, expected_digest):
+    payload = verify_submission(bundle, expected_digest)
+    partitions = partitions.final_view()
+    manifest = payload["run_manifest"]
+    if canonical(partitions.public_manifest()) != canonical(manifest["partitions"]):
+        raise ValueError("Judge request configuration differs from the sealed run")
+    if canonical(asdict(protocol)) != canonical(manifest["protocol"]):
+        raise ValueError("Judge protocol differs from the sealed run")
+    controller = Controller(journal, backend, partitions, payload["environment"])
+    if controller.environment != manifest["environment"]:
+        raise ValueError("Sealed environment is invalid")
+    for address, engine in payload["engines"].items():
+        if journal.put("engine", engine) != address:
+            raise ValueError("Invalid sealed engine digest")
+    evaluator = Lane(f'replicate-{manifest["replicate"]}/evaluation', "research_overhead",
+                     manifest["nodes"][-1], Cost(**payload["remaining_evaluation_budget"]))
+    journal.event(f"{evaluator.path}/input", {"submission_digest": expected_digest})
+    journal.begin_scope(evaluator.path)
+
+    def compare(key, group):
+        stored = journal.get_event(f"{evaluator.path}/{key}/result")
+        if stored is not None:
+            return stored
+        try:
+            result = final_comparison(controller, evaluator, key, Checkpoint(**group["reference"]),
+                                      group["submissions"], protocol)
+        except InsufficientBudget:
+            result = {"status": "evaluation_budget_exhausted"}
+        journal.event(f"{evaluator.path}/{key}/result", result)
+        return result
+
+    groups = payload["comparisons"]
+    evaluation = {
+        "rq1": compare("rq1", groups["rq1"]),
+        "rq2": [compare(f"rq2-{index}", group) for index, group in enumerate(groups["rq2"])],
+        "rq3_memory_off": [compare(f"rq3-{index}", group)
+                           for index, group in enumerate(groups["rq3_memory_off"])],
+    }
+    return {"run_manifest": manifest, "submission_digest": expected_digest,
+            "submission": groups["rq1"]["submissions"], "sealed_evaluation": evaluation,
+            "evaluation_cost": journal.spent(evaluator.path).record(),
+            "events": journal.events(evaluator.path + "/"),
+            "budget_ledger": list(journal.budget_rows(evaluator.path + "/"))}
+
+
+def deploy_pair(journal, backend, partitions, protocol, nodes, replicate, environment, **options):
+    """Convenience path for a simulation with both sets of keys available."""
+    bundle, report = seal_pair(journal, backend, partitions, protocol, nodes, replicate, environment, **options)
+    scores = evaluate_pair(journal, backend, partitions, protocol, bundle, bundle["digest"])
+    physical = {node: Cost(**cost) for node, cost in report["physical_cost_by_node"].items()}
+    for row in scores["budget_ledger"]:
+        if row["physical"]:
+            physical[row["node"]] = physical.get(row["node"], Cost()) + Cost(**row["receipt"]["cost"])
+    return {**report, **scores, "events": report["events"] + scores["events"],
+            "budget_ledger": report["budget_ledger"] + scores["budget_ledger"],
+            "physical_cost_by_node": {node: cost.record() for node, cost in physical.items()}}

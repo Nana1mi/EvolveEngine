@@ -39,18 +39,20 @@ def load_protocol(values):
 class SparkBackend:
     version = "spark-v1"
 
-    def __init__(self, config):
+    def __init__(self, config, *, evaluation_only=False):
         self.config = config
+        self.evaluation_only = evaluation_only
         self.nodes = tuple(config["nodes"])
         if len(self.nodes) != 4 or len(set(self.nodes)) != 4:
             raise ValueError("Configure four distinct OpenSSH host aliases")
         if not all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@-]{0,120}", host) for host in self.nodes):
             raise ValueError("Invalid OpenSSH host alias")
         self.allowed_scope = tuple(config["editable"])
-        self.repository = Repository(config["engine_checkout"], config["engine_revision"], self.allowed_scope)
-        self.provider = Provider(**config["provider"])
-        self.pi = PiAgent(config["pi_command"], config["pi_version"], self.provider)
-        self.model = ModelStages(self.pi, self.repository, config["source_hints"])
+        if not evaluation_only:
+            self.repository = Repository(config["engine_checkout"], config["engine_revision"], self.allowed_scope)
+            self.provider = Provider(**config["provider"])
+            self.pi = PiAgent(config["pi_command"], config["pi_version"], self.provider)
+            self.model = ModelStages(self.pi, self.repository, config["source_hints"])
         self.protocol = load_protocol(config["protocol"])
         self.caps = {stage: cost_from(value) for stage, value in config["caps"].items()}
         if set(self.caps) != {"generate", "implement", "propose", "profile", "quality", "measure", "preflight"}:
@@ -72,6 +74,12 @@ class SparkBackend:
         return self.caps[stage]
 
     def run(self, stage, request, cap, node):
+        if self.evaluation_only:
+            partition = request.get("block", {}).get("partition")
+            if not ((stage == "measure" and partition == "T") or
+                    (stage == "quality" and partition == "Q" and request.get("role") == "final")):
+                raise PermissionError("Judge backend only runs sealed quality and timing operations")
+            return self._remote(stage, request, cap, node)
         if stage in {"generate", "implement", "propose"}:
             return self.model.run(stage, request, cap)
         return self._remote(stage, request, cap, node)
@@ -140,9 +148,9 @@ class SparkBackend:
                 "partition_manifest": partitions.public_manifest()}
 
 
-def data_partitions(config, seed, salt):
+def data_partitions(config, seed, salt=None, **keys):
     filename = Path(config["token_ids"])
     data = json.loads(filename.read_text(encoding="utf-8"))
     if digest(data) != config["token_ids_digest"]:
         raise ValueError("Token ID manifest does not match its lock")
-    return Partitions(seed, salt, data["token_ids"], data.get("special_prefix", ()))
+    return Partitions(seed, salt, data["token_ids"], data.get("special_prefix", ()), **keys)

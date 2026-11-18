@@ -41,7 +41,8 @@ class ResumeTests(unittest.TestCase):
         for scenario in ("accept", "reject"):
             with self.subTest(scenario=scenario), TemporaryDirectory() as directory:
                 with Journal(Path(directory) / "run.sqlite") as journal:
-                    report = deploy_pair(journal, MockBackend(scenario), Partitions(3, b"t" * 32),
+                    report = deploy_pair(journal, MockBackend(scenario),
+                                         Partitions(3, b"t" * 32, final_salt=b"q" * 32),
                                          MOCK_PROTOCOL, nodes, 0, {"simulated": True}, causal_points=1)
                     decision = next(row for row in report["events"] if row["id"].endswith("/decided"))
                     self.assertEqual(decision["status"], scenario + "ed")

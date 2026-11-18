@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import secrets
 import sqlite3
@@ -10,7 +11,7 @@ import subprocess
 import sys
 
 from .controller import Controller, Lane
-from .experiment import MOCK_PROTOCOL, deploy_pair
+from .experiment import MOCK_PROTOCOL, deploy_pair, evaluate_pair, seal_pair, verify_submission
 from .journal import Interrupted, Journal
 from .mock import MockBackend
 from .partitions import Partitions
@@ -30,8 +31,10 @@ def write_json(path, data):
 def mock(args):
     root = args.output
     backend = MockBackend(args.scenario)
-    salt = hashlib.sha256(f"simulation-only/{args.seed}/{args.replicate}".encode()).digest()
-    partitions = Partitions(args.seed, salt)
+    key = f"simulation-only/{args.seed}/{args.replicate}".encode()
+    salt = hashlib.sha256(key + b"/development").digest()
+    final_salt = hashlib.sha256(key + b"/final").digest()
+    partitions = Partitions(args.seed, salt, final_salt=final_salt)
 
     def interrupt(key):
         if args.interrupt_at == key:
@@ -59,9 +62,11 @@ def read_json(path):
 def keygen(args):
     path = args.path
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("xb") as stream:
-        stream.write(secrets.token_bytes(32))
-    return {"seal_key_path": str(path.resolve())}
+    key = secrets.token_bytes(32)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(key)
+    return {"seal_key_path": str(path.resolve()), "commitment": hashlib.sha256(key).hexdigest()}
 
 
 def token_ids(args):
@@ -79,7 +84,8 @@ def token_ids(args):
 def live(args):
     config = json.loads(read_json(args.config))
     backend = SparkBackend(config)
-    partitions = data_partitions(config, args.seed, args.salt_file.read_bytes())
+    partitions = data_partitions(config, args.seed, args.salt_file.read_bytes(),
+                                 final_commitment=getattr(args, "final_commitment", None))
     if args.command == "preflight":
         evidence = backend.pilot_preflight(partitions, args.node)
         write_json(args.output, evidence)
@@ -115,10 +121,35 @@ def live(args):
                       "engine_checkpoints": journal.objects("engine"),
                       "budget_ledger": list(journal.budget_rows()), "experience": journal.objects("experience")}
         else:
-            report = deploy_pair(journal, backend, partitions, backend.protocol, backend.nodes,
-                                 args.replicate, environment, causal_points=args.causal_points, ablation=args.ablation)
+            bundle, report = seal_pair(journal, backend, partitions, backend.protocol, backend.nodes,
+                                       args.replicate, environment, causal_points=args.causal_points,
+                                       ablation=args.ablation)
+            write_json(args.output / "sealed_submission.json", bundle)
     write_json(args.output / "report.json", report)
-    return {"simulated": False, "report": str(args.output / "report.json"), "submission": report["submission"]}
+    result = {"simulated": False, "report": str(args.output / "report.json"), "submission": report["submission"]}
+    if args.command == "pilot":
+        result.update(sealed_submission=str(args.output / "sealed_submission.json"),
+                      submission_digest=bundle["digest"])
+    return result
+
+
+def evaluate(args):
+    bundle = json.loads(read_json(args.submission))
+    payload = verify_submission(bundle, args.submission_digest)
+    config = json.loads(read_json(args.config))
+    if payload["environment"]["configuration"] != digest(config):
+        raise ValueError("Judge controller config differs from the sealed configuration")
+    manifest = payload["run_manifest"]["partitions"]
+    partitions = data_partitions(config, manifest["seed"], final_salt=args.final_salt_file.read_bytes(),
+                                 development_commitment=manifest["development_commitment"],
+                                 final_commitment=manifest["final_commitment"])
+    backend = SparkBackend(config, evaluation_only=True)
+    with Journal(args.output / "judge.sqlite3", enforce_wall=True) as journal:
+        report = evaluate_pair(journal, backend, partitions, backend.protocol, bundle, args.submission_digest)
+    path = args.output / "sealed_evaluation.json"
+    write_json(path, report)
+    return {"report": str(path), "submission_digest": args.submission_digest,
+            "rq1_status": report["sealed_evaluation"]["rq1"]["status"]}
 
 
 def main():
@@ -162,10 +193,19 @@ def main():
             stage.add_argument("--node", required=True)
             stage.add_argument("--steps", type=int, default=2)
         if name == "pilot":
+            stage.add_argument("--final-commitment", required=True,
+                               help="public SHA-256 of an independent key held by the judge")
             stage.add_argument("--replicate", type=int, default=0)
             stage.add_argument("--causal-points", type=int, choices=(1, 3), default=1)
             stage.add_argument("--ablation", action="store_true")
         stage.set_defaults(handler=live)
+    judge = command.add_parser("evaluate", help="judge only precommitted engine submissions with private Q/T")
+    judge.add_argument("--config", type=Path, required=True)
+    judge.add_argument("--submission", type=Path, required=True)
+    judge.add_argument("--submission-digest", required=True)
+    judge.add_argument("--final-salt-file", type=Path, required=True)
+    judge.add_argument("--output", type=Path, required=True)
+    judge.set_defaults(handler=evaluate)
     args = parser.parse_args()
     try:
         result = args.handler(args)
