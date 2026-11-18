@@ -96,6 +96,8 @@ class SparkBackend:
             else:
                 receipt = json.loads(completed.stdout)
                 status, detail, data = receipt["status"], receipt.get("detail", ""), receipt["data"]
+                if status != "ok" and completed.stderr:
+                    detail += "\n" + completed.stderr.decode(errors="replace")[-1500:]
         except subprocess.TimeoutExpired:
             status, detail, data = "timeout", "SSH worker exceeded the reservation", {}
         except (OSError, ValueError, KeyError, TypeError) as failure:

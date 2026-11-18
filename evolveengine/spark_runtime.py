@@ -2,6 +2,7 @@
 
 import base64
 import contextlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -35,13 +36,12 @@ def runtime_info():
 
 class MiniRuntime:
     def __init__(self, options):
-        import minisgl
         import torch
         from minisgl.llm import LLM
         from minisgl.core import SamplingParams
         from importlib.metadata import version
 
-        if not Path(minisgl.__file__).resolve().is_relative_to("/engine/python/minisgl"):
+        if not Path(inspect.getfile(LLM)).resolve().is_relative_to("/engine/python/minisgl"):
             raise RuntimeError("Mini-SGLang was not imported from the mounted engine snapshot")
         if platform.machine() != "aarch64":
             raise RuntimeError("Expected an aarch64 DGX Spark worker")

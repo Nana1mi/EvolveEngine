@@ -7,6 +7,7 @@ import statistics
 from .controller import Controller, Lane
 from .engine import gate, compare_rates
 from .partitions import load_bank
+from .reports import process_metrics
 from .schema import Checkpoint, Cost, digest
 
 
@@ -177,15 +178,19 @@ def deploy_pair(journal, backend, partitions, protocol, nodes, replicate, enviro
     for row in ledger:
         if row["physical"]:
             physical[row["node"]] = physical.get(row["node"], Cost()) + Cost(**row["receipt"]["cost"])
+    attempts = journal.objects("experience")
+    events = journal.events("")
     values = {
         "run_manifest": manifest, "submission": sealed,
         "bank_counts": {"D": len(d_starts), "C": len(causal_bank)},
         "sealed_evaluation": {"rq1": rq1, "rq2": rq2, "rq3_memory_off": rq3},
         "bank_cost": {"D": journal.spent(d_lane.path).record(), "C": journal.spent(c_lane.path).record()},
         "evaluation_cost": journal.spent(evaluator.path).record(),
-        "events": journal.events(""), "budget_ledger": ledger,
+        "events": events, "budget_ledger": ledger,
+        "process_metrics": {lane.owner: process_metrics(lane.path, list(attempts.values()), events, ledger)
+                            for lane in (fixed, evolving)},
         "physical_cost_by_node": {node: cost.record() for node, cost in physical.items()},
         "policy_registry": journal.objects("policy"), "engine_checkpoints": journal.objects("engine"),
-        "memory_registry": journal.objects("memory"), "experience": journal.objects("experience"),
+        "memory_registry": journal.objects("memory"), "experience": attempts,
     }
     return values

@@ -1,7 +1,9 @@
 """Compare sealed experiment replicates, with one statistical unit per lineage."""
 
 import math
-from statistics import mean, stdev
+from statistics import mean, median, stdev
+
+from .schema import Cost
 
 
 # Two-sided 95% Student-t critical values for 1 through 30 degrees of freedom.
@@ -35,6 +37,46 @@ def difference(result, left, right, *, invalid_start_is_neutral=False):
         return 0.0 if invalid_start_is_neutral and result["status"].startswith("invalid_reference") else None
     rows = result["engines"]
     return math.log(rows[right]["speedup"]) - math.log(rows[left]["speedup"])
+
+
+def process_metrics(prefix, attempts, events, ledger):
+    chosen = [row for row in attempts if row["attempt_id"].startswith(prefix + "/step-")]
+    chosen.sort(key=lambda row: int(row["attempt_id"].rsplit("-", 1)[1]))
+    costs = [row["cost"]["wall_ms"] for row in chosen]
+    outcomes = {}
+    curve = []
+    gain = 0.0
+    for row in chosen:
+        outcome = row["outcome"]
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        if outcome == "mainline":
+            gain += row["evidence"]["log_gain"]
+        operations = [entry for entry in ledger if entry["id"].startswith(row["attempt_id"] + "/")]
+        if not operations:
+            continue
+        cutoff = max(entry["settled_ns"] for entry in operations)
+        spent = Cost()
+        for entry in ledger:
+            if entry["id"].startswith(prefix + "/") and entry["settled_ns"] <= cutoff:
+                spent += Cost(**entry["receipt"]["cost"])
+        curve.append({"attempt": row["attempt_id"], "outcome": outcome,
+                      "observed_development_speedup": math.exp(gain), "cost": spent.record()})
+    fidelity = [item["evidence"]["fidelity"]["status"] for item in chosen if "fidelity" in item["evidence"]]
+    updates = [item for item in events if item["id"].startswith(prefix + "/window-") and item["id"].endswith("/decided")]
+    replay_rows = [item for update in updates for item in update.get("replay", [])]
+    update_cost = Cost()
+    for entry in ledger:
+        if entry["id"].startswith(prefix + "/window-"):
+            update_cost += Cost(**entry["receipt"]["cost"])
+    first = next((row["cost"] for row in curve if row["outcome"] == "mainline"), None)
+    return {"step_count": len(chosen), "median_step_ms": median(costs) if costs else None,
+            "outcomes": outcomes, "fidelity_review_count": len(fidelity),
+            "fidelity_pass_rate": fidelity.count("pass") / len(fidelity) if fidelity else None,
+            "first_improvement_cost": first, "development_best_curve": curve,
+            "update_decisions": [item["status"] for item in updates], "update_cost": update_cost.record(),
+            "replayed_pool_count": len(replay_rows),
+            "first_choice_flip_rate": (mean(row["first_choice_changed"] for row in replay_rows)
+                                       if replay_rows else None)}
 
 
 def summarize(reports):
