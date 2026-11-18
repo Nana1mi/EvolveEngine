@@ -1,0 +1,47 @@
+{
+  "nodes": ["spark-1", "spark-2", "spark-3", "spark-4"],
+  "engine_checkout": "/path/to/mini-sglang",
+  "engine_revision": "REPLACE_WITH_VALIDATED_FULL_COMMIT_SHA",
+  "editable": ["python/minisgl/engine", "python/minisgl/scheduler", "python/minisgl/kvcache", "python/minisgl/attention", "python/minisgl/layers", "python/minisgl/kernel"],
+  "source_hints": ["python/minisgl/scheduler/scheduler.py", "python/minisgl/engine/engine.py"],
+  "remote_project": "/opt/EvolveEngine",
+  "remote_worker_config": "/etc/evolveengine/spark-worker.json",
+  "worker_config_digest": "REPLACE_WITH_CANONICAL_WORKER_CONFIG_DIGEST",
+  "token_ids": ".evolveengine/token-ids.json",
+  "token_ids_digest": "REPLACE_WITH_CANONICAL_TOKEN_MANIFEST_DIGEST",
+  "pi_command": ["pi"],
+  "pi_version": "1.5.2",
+  "provider": {
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "model_name": "DeepSeek-V4.1-Flash",
+    "key_env": "DEEPSEEK_API_KEY",
+    "max_turn_output": 2500,
+    "fingerprint": null
+  },
+  "max_preflight_drift": 0.02,
+  "noise_epsilon": 0.01,
+  "caps": {
+    "preflight": {"wall_ms": 1200000, "node_ms": 1200000, "blocks": 2},
+    "profile": {"wall_ms": 90000, "node_ms": 90000},
+    "generate": {"wall_ms": 60000, "input_tokens": 5500, "output_tokens": 2000},
+    "implement": {"wall_ms": 180000, "input_tokens": 13500, "output_tokens": 4000},
+    "propose": {"wall_ms": 60000, "input_tokens": 9000, "output_tokens": 2000},
+    "quality": {"wall_ms": 240000, "node_ms": 240000},
+    "measure": {"wall_ms": 105000, "node_ms": 105000, "blocks": 1}
+  },
+  "protocol": {
+    "main": {"wall_ms": 14400000, "node_ms": 14400000, "input_tokens": 400000, "blocks": 40},
+    "development": {"wall_ms": 900000, "node_ms": 900000, "input_tokens": 25000, "blocks": 2},
+    "causal": {"wall_ms": 1800000, "node_ms": 1800000, "input_tokens": 50000, "blocks": 6},
+    "bank": {"wall_ms": 7200000, "node_ms": 7200000, "input_tokens": 200000, "blocks": 24},
+    "evaluation": {"wall_ms": 43200000, "node_ms": 43200000, "input_tokens": 600000, "blocks": 300},
+    "windows_ms": [3600000, 9000000],
+    "main_steps": 100,
+    "bank_steps": 24,
+    "validation_steps": 1,
+    "fork_steps": 12,
+    "final_blocks": 3,
+    "final_count": 64
+  }
+}

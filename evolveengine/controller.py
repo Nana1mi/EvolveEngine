@@ -87,7 +87,9 @@ class Controller:
         observation = asdict(Observation(**profile.data["observation"]))
         self.journal.event(f"{path}/profiled", {"evidence": profile.data["evidence"], "observation": observation})
         memory = self._memory_view(checkpoint, observation["primary_class"], memory_enabled)
-        generator_input = {"engine": engine, "profile": profile.data, "memory": memory}
+        generator_input = {"engine": engine,
+                           "profile": {"observation": observation, "evidence": profile.data["evidence"]},
+                           "memory": memory}
         generated = self._operate(lane, f"{key}/generate", "generate", generator_input,
                                   None if shared is None else shared["generate"])
         prepared = {"profile": asdict(profile), "generate": asdict(generated)}
@@ -230,6 +232,7 @@ class Controller:
         for role in first:
             policy = groups[role]
             arm = lane.fork(f"{key}/{role}", budget)
+            self.journal.begin_scope(arm.path)
             start = replace(checkpoint, policy_digest=policy, lineage=arm.path)
             if first_results is None:
                 try:
@@ -263,6 +266,8 @@ class Controller:
             self.journal.event(f"{prefix}/started", start)
         decision = {"parent": checkpoint.policy_digest, "current": checkpoint.policy_digest,
                     "status": "insufficient_budget", "comparisons": []}
+        if len(dev_starts) != 2:
+            decision["status"] = "unavailable_development_checkpoints"
         if start["reserved"]:
             decision = self._validate_update(lane, key, checkpoint, parent, dev_starts,
                                              dev_budget, dev_steps, decision)
@@ -337,6 +342,7 @@ class Controller:
         sealed = self.journal.get_event(f"{prefix}/sealed")
         if sealed is not None:
             return sealed
+        self.journal.begin_scope(lane.path)
         step_index, window_index, tick = 0, 0, 0
         while step_index < steps:
             tick_path = f"{prefix}/tick-{tick}"
@@ -344,7 +350,8 @@ class Controller:
             action = self.journal.get_event(tick_path)
             if action is None:
                 spent = self.journal.spent(lane.path)
-                due = window_index < len(windows) and spent.wall_ms >= windows[window_index]
+                due = (window_index < len(windows)
+                       and self.journal.wall_elapsed(lane.path, spent) >= windows[window_index])
                 action = {"next": "update" if due else "step"}
                 self.journal.event(tick_path, action)
             if action["next"] == "update":
@@ -368,6 +375,7 @@ class Controller:
                 break
         submission = {"checkpoint": asdict(checkpoint), "cost": self.journal.spent(lane.path).record(),
                       "steps": step_index, "windows": window_index}
+        submission["elapsed_wall_ms"] = self.journal.wall_elapsed(lane.path, Cost(**submission["cost"]))
         self.journal.event(f"{prefix}/sealed", submission)
         return submission
 

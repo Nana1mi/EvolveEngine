@@ -19,10 +19,11 @@ class Interrupted(Exception):
 
 
 class Journal:
-    def __init__(self, path, on_reserved=None):
+    def __init__(self, path, on_reserved=None, *, enforce_wall=False):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.on_reserved = on_reserved
+        self.enforce_wall = enforce_wall
         self.db = None
 
     def __enter__(self):
@@ -131,7 +132,25 @@ class Journal:
         return total
 
     def can_reserve(self, scopes, cost):
-        return all((self.spent(prefix) + cost).fits(limit) for prefix, limit in scopes)
+        for prefix, limit in scopes:
+            spent = self.spent(prefix)
+            if not (spent + cost).fits(limit):
+                return False
+            if self.wall_elapsed(prefix, spent) + cost.wall_ms > limit.wall_ms:
+                return False
+        return True
+
+    def begin_scope(self, prefix):
+        key = prefix + "/wall_start"
+        if self.enforce_wall and self.get_event(key) is None:
+            self.event(key, {"started_ns": time.time_ns()})
+
+    def wall_elapsed(self, prefix, spent):
+        if not self.enforce_wall:
+            return spent.wall_ms
+        started = self.get_event(prefix + "/wall_start")
+        elapsed = (time.time_ns() - started["started_ns"]) // 10**6 if started else 0
+        return max(spent.wall_ms, elapsed)
 
     def can_finish(self, scopes, operations):
         missing = Cost()

@@ -1,0 +1,23 @@
+{
+  "engine_checkout": "/opt/mini-sglang",
+  "engine_revision": "REPLACE_WITH_VALIDATED_FULL_COMMIT_SHA",
+  "editable": ["python/minisgl/engine", "python/minisgl/scheduler", "python/minisgl/kvcache", "python/minisgl/attention", "python/minisgl/layers", "python/minisgl/kernel"],
+  "image": "REPLACE_WITH_TESTED_AARCH64_IMAGE@sha256:REPLACE_WITH_OCI_DIGEST",
+  "model_path": "/opt/models/qwen3-0.6b-pinned",
+  "model_digest": "REPLACE_WITH_QWEN_ASSET_DIGEST",
+  "lease_path": "/var/lock/evolveengine-spark.lock",
+  "engine_options": {
+    "attention_backend": "REPLACE_WITH_VALIDATED_SM121_BACKEND",
+    "cache_type": "naive",
+    "max_running_req": 1,
+    "cuda_graph_bs": [1],
+    "memory_ratio": 0.55
+  },
+  "runtime_env": {},
+  "profile_prompt": [],
+  "gap_threshold": 0.4,
+  "eos_probes": {"search": [], "development": [], "admission": [], "final": [], "preflight": []},
+  "quality_samples": 4,
+  "vocab_size": 151936,
+  "max_kl": 0.001
+}

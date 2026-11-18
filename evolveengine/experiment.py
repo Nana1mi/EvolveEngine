@@ -44,9 +44,10 @@ def build_bank(controller, partition, lane, engine, size, steps):
         row["checkpoint"] for row in journal.events(lane.path + "/step-")
         if row["id"].endswith("/finished")
     ]
-    if len(history) < size:
-        raise ValueError(f"{partition} bank needs {size} checkpoint records, got {len(history)}")
-    if size == 1:
+    history = [item for item in history if item["environment_digest"] == controller.environment]
+    if len(history) <= size:
+        selected = history
+    elif size == 1:
         selected = history[len(history) // 2:len(history) // 2 + 1]
     else:
         selected = [history[index * (len(history) - 1) // (size - 1)] for index in range(size)]
@@ -58,7 +59,7 @@ def final_comparison(controller, lane, key, reference, submissions, protocol):
     name = f"{lane.path}/{key}"
     if any(row.get("checkpoint") is None for row in submissions.values()):
         raise ValueError("Formal evaluation requires sealed submissions")
-    quality_block = controller.partitions.block("final", "Q", key + "/gate", 32)
+    quality_block = controller.partitions.block("final", "Q", name + "/gate", 32)
     engines = {label: journal.get("engine", record["checkpoint"]["engine_digest"])
                for label, record in submissions.items()}
     engines["reference"] = journal.get("engine", reference.engine_digest)
@@ -77,7 +78,7 @@ def final_comparison(controller, lane, key, reference, submissions, protocol):
             continue
         ratios = []
         for block_index in range(protocol.final_blocks):
-            block = controller.partitions.block("final", "T", f"{key}/{block_index}", protocol.final_count)
+            block = controller.partitions.block("final", "T", f"{name}/{block_index}", protocol.final_count)
             order = (["reference", "candidate", "candidate", "reference"]
                      if int(digest([key, block_index, label])[-1], 16) % 2 == 0
                      else ["candidate", "reference", "reference", "candidate"])
@@ -117,6 +118,7 @@ def deploy_pair(journal, backend, partitions, protocol, nodes, replicate, enviro
     engine = backend.initial_engine()
     manifest = {"environment": controller.environment, "initial_engine": journal.put("engine", engine),
                 "initial_policy": controller.baseline, "replicate": replicate, "nodes": allocation,
+                "simulated": environment.get("simulated", False),
                 "protocol": asdict(protocol), "partitions": partitions.public_manifest(),
                 "causal_points": causal_points, "ablation": ablation}
     journal.event(f"{run}/manifest", manifest)
@@ -132,7 +134,8 @@ def deploy_pair(journal, backend, partitions, protocol, nodes, replicate, enviro
     evolving = Lane(f"{run}/main/evolving", "evolving", evolving_node, protocol.main)
     start = controller.checkpoint(engine, run)
     sealed = {}
-    for lane in ((fixed, evolving) if replicate % 2 == 0 else (evolving, fixed)):
+    run_order = (fixed, evolving) if (replicate + replicate // len(nodes)) % 2 == 0 else (evolving, fixed)
+    for lane in run_order:
         if lane.owner == "evolving":
             sealed[lane.owner] = controller.run(lane, start, protocol.main_steps, windows=protocol.windows_ms,
                                                 dev_starts=d_starts, dev_budget=protocol.development,
@@ -141,6 +144,7 @@ def deploy_pair(journal, backend, partitions, protocol, nodes, replicate, enviro
             sealed[lane.owner] = controller.run(lane, start, protocol.main_steps)
     journal.event(f"{run}/sealed", sealed)
     evaluator = Lane(f"{run}/evaluation", "research_overhead", eval_node, protocol.evaluation)
+    journal.begin_scope(evaluator.path)
     h_star = sealed["evolving"]["checkpoint"]["policy_digest"]
     causal_bank = load_bank(journal, "causal", "C", c_bank)
     causal = []
@@ -175,6 +179,7 @@ def deploy_pair(journal, backend, partitions, protocol, nodes, replicate, enviro
             physical[row["node"]] = physical.get(row["node"], Cost()) + Cost(**row["receipt"]["cost"])
     values = {
         "run_manifest": manifest, "submission": sealed,
+        "bank_counts": {"D": len(d_starts), "C": len(causal_bank)},
         "sealed_evaluation": {"rq1": rq1, "rq2": rq2, "rq3_memory_off": rq3},
         "bank_cost": {"D": journal.spent(d_lane.path).record(), "C": journal.spent(c_lane.path).record()},
         "evaluation_cost": journal.spent(evaluator.path).record(),

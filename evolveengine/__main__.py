@@ -4,13 +4,19 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import secrets
 import sqlite3
+import subprocess
 import sys
 
+from .controller import Controller, Lane
 from .experiment import MOCK_PROTOCOL, deploy_pair
 from .journal import Interrupted, Journal
 from .mock import MockBackend
 from .partitions import Partitions
+from .reports import summarize
+from .schema import digest
+from .spark import SparkBackend, data_partitions
 
 
 def write_json(path, data):
@@ -46,6 +52,75 @@ def mock(args):
             "rq1": report["sealed_evaluation"]["rq1"].get("engines", {})}
 
 
+def read_json(path):
+    return Path(path).read_text(encoding="utf-8-sig")
+
+
+def keygen(args):
+    path = args.path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("xb") as stream:
+        stream.write(secrets.token_bytes(32))
+    return {"seal_key_path": str(path.resolve())}
+
+
+def token_ids(args):
+    tokenizer = json.loads(read_json(args.tokenizer))
+    special = {item["id"] for item in tokenizer.get("added_tokens", []) if item.get("special")}
+    vocabulary = tokenizer["model"]["vocab"]
+    ids = sorted({token for token in vocabulary.values() if type(token) is int and token not in special})
+    if len(ids) < 32:
+        raise ValueError("Expected a pinned byte-pair vocabulary with ordinary token IDs")
+    value = {"token_ids": ids[:2048], "special_prefix": []}
+    write_json(args.output, value)
+    return {"digest": digest(value), "output": str(args.output), "count": len(value["token_ids"])}
+
+
+def live(args):
+    config = json.loads(read_json(args.config))
+    backend = SparkBackend(config)
+    partitions = data_partitions(config, args.seed, args.salt_file.read_bytes())
+    if args.command == "preflight":
+        evidence = backend.pilot_preflight(partitions, args.node)
+        write_json(args.output, evidence)
+        return {"passed": True, "nodes": list(evidence["nodes"]), "receipt": str(args.output)}
+    evidence = json.loads(read_json(args.preflight_receipt))
+    if evidence["configuration_digest"] != digest(config):
+        raise ValueError("Preflight receipt does not match the controller config")
+    nodes = [args.node] if args.command == "optimize" else list(backend.nodes)
+    if any(node not in evidence["nodes"] for node in nodes):
+        raise ValueError("Every selected Spark node requires a passing receipt")
+    backend.pi.preflight()
+    fingerprints = sorted({fingerprint for row in evidence["agent"]["metered_probe"]
+                           for fingerprint in row.get("fingerprints", [])})
+    environment = {"backend": backend.version, "configuration": digest(config),
+                   "nodes": {name: {key: attrs[key] for key in
+                                    ("driver", "runtime", "runtime_image", "engine_revision", "model_digest")}
+                             for name, attrs in evidence["nodes"].items()},
+                   "agent": {"pi": backend.pi.version, "model": backend.provider.model,
+                             "fingerprint": backend.provider.fingerprint,
+                             "observed_preflight_fingerprints": fingerprints},
+                   "noise_epsilon": config["noise_epsilon"]}
+    with Journal(args.output / "journal.sqlite3", enforce_wall=True) as journal:
+        if args.command == "optimize":
+            if args.steps <= 0:
+                raise ValueError("Single-node optimization needs a positive step count")
+            controller = Controller(journal, backend, partitions, environment,
+                                    epsilon=environment["noise_epsilon"])
+            start = controller.checkpoint(backend.initial_engine(), "p1")
+            lane = Lane("p1", "fixed", args.node, backend.protocol.main)
+            journal.event("p1/protocol", {"partitions": partitions.public_manifest()})
+            submission = controller.run(lane, start, args.steps)
+            report = {"submission": submission, "events": journal.events(""),
+                      "engine_checkpoints": journal.objects("engine"),
+                      "budget_ledger": list(journal.budget_rows()), "experience": journal.objects("experience")}
+        else:
+            report = deploy_pair(journal, backend, partitions, backend.protocol, backend.nodes,
+                                 args.replicate, environment, causal_points=args.causal_points, ablation=args.ablation)
+    write_json(args.output / "report.json", report)
+    return {"simulated": False, "report": str(args.output / "report.json"), "submission": report["submission"]}
+
+
 def main():
     parser = argparse.ArgumentParser(prog="python -m evolveengine")
     command = parser.add_subparsers(dest="command", required=True)
@@ -58,13 +133,46 @@ def main():
     simulate.add_argument("--ablation", action="store_true")
     simulate.add_argument("--interrupt-at", help="fault injection at the given operation ID")
     simulate.set_defaults(handler=mock)
+    new_key = command.add_parser("new-seal-key", help="create private salts for independent request pools")
+    new_key.add_argument("path", type=Path)
+    new_key.set_defaults(handler=keygen)
+    tokens = command.add_parser("make-token-ids", help="freeze an ordinary token set from the Qwen tokenizer")
+    tokens.add_argument("--tokenizer", type=Path, required=True)
+    tokens.add_argument("--output", type=Path, required=True)
+    tokens.set_defaults(handler=token_ids)
+    hash_json = command.add_parser("hash-config", help="print the canonical digest of a JSON manifest")
+    hash_json.add_argument("path", type=Path)
+    hash_json.set_defaults(handler=lambda args: {"digest": digest(json.loads(read_json(args.path)))})
+    stats = command.add_parser("summarize", help="aggregate sealed independent replicate reports")
+    stats.add_argument("reports", type=Path, nargs="+")
+    stats.set_defaults(handler=lambda args: summarize([json.loads(read_json(path)) for path in args.reports]))
+    for name in ("preflight", "optimize", "pilot"):
+        stage = command.add_parser(name, help={"preflight": "check pinned Spark/Pi runtime",
+                                               "optimize": "run P1 on a single Spark",
+                                               "pilot": "run a paired Spark trial"}[name])
+        stage.add_argument("--config", type=Path, required=True)
+        stage.add_argument("--salt-file", type=Path, required=True)
+        stage.add_argument("--seed", type=int, default=21001)
+        stage.add_argument("--output", type=Path, required=True)
+        if name == "preflight":
+            stage.add_argument("--node", action="append", help="probe only these configured nodes")
+        else:
+            stage.add_argument("--preflight-receipt", type=Path, required=True)
+        if name == "optimize":
+            stage.add_argument("--node", required=True)
+            stage.add_argument("--steps", type=int, default=2)
+        if name == "pilot":
+            stage.add_argument("--replicate", type=int, default=0)
+            stage.add_argument("--causal-points", type=int, choices=(1, 3), default=1)
+            stage.add_argument("--ablation", action="store_true")
+        stage.set_defaults(handler=live)
     args = parser.parse_args()
     try:
         result = args.handler(args)
     except Interrupted as failure:
         print(f"Simulated interruption after reservation: {failure}", file=sys.stderr)
         return 75
-    except (ValueError, OSError, sqlite3.Error) as failure:
+    except (ValueError, OSError, KeyError, TypeError, sqlite3.Error, subprocess.SubprocessError) as failure:
         print(f"EvolveEngine: {failure}", file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
