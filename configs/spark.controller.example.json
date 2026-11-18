@@ -20,15 +20,18 @@
     "fingerprint": null
   },
   "max_preflight_drift": 0.02,
+  "preflight_repeats": 2,
   "noise_epsilon": 0.01,
   "caps": {
-    "preflight": {"wall_ms": 1200000, "node_ms": 1200000, "blocks": 2},
+    "preflight": {"wall_ms": 1200000, "node_ms": 1200000},
     "profile": {"wall_ms": 90000, "node_ms": 90000},
     "generate": {"wall_ms": 60000, "input_tokens": 5500, "output_tokens": 2000},
     "implement": {"wall_ms": 180000, "input_tokens": 13500, "output_tokens": 4000},
     "propose": {"wall_ms": 60000, "input_tokens": 9000, "output_tokens": 2000},
     "quality": {"wall_ms": 240000, "node_ms": 240000},
-    "measure": {"wall_ms": 105000, "node_ms": 105000, "blocks": 1}
+    "measure": {"wall_ms": 105000, "node_ms": 105000, "blocks": 1},
+    "measure_development": {"wall_ms": 150000, "node_ms": 150000, "blocks": 1},
+    "measure_final": {"wall_ms": 360000, "node_ms": 360000, "blocks": 1}
   },
   "protocol": {
     "main": {"wall_ms": 14400000, "node_ms": 14400000, "input_tokens": 400000, "blocks": 40},

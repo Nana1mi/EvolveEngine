@@ -12,6 +12,11 @@ from .schema import Candidate, Checkpoint, Cost, ExecutionContract, Experience, 
 H0 = {"rules": []}
 
 
+def update_reservation(backend, development):
+    scoring = backend.cap("measure", partition="D") + backend.cap("quality")
+    return backend.cap("propose") + development * 4 + scoring * 4
+
+
 @dataclass(frozen=True)
 class Lane:
     path: str
@@ -45,7 +50,8 @@ class Controller:
                           self.environment, lineage)
 
     def _operate(self, lane, key, stage, request, reused=None):
-        cap = self.backend.cap(stage)
+        cap = (self.backend.cap(stage, partition=request["block"]["partition"])
+               if stage == "measure" else self.backend.cap(stage))
         if reused is not None:
             result = Result(reused["data"], Cost(**reused["cost"]), reused["status"], reused["detail"])
             return self.journal.call(f"{lane.path}/{key}", request, result.cost, lane.limits,
@@ -258,8 +264,7 @@ class Controller:
         if prior is not None:
             return prior
         parent = self.journal.get("policy", checkpoint.policy_digest)
-        scoring = self.backend.cap("measure") + self.backend.cap("quality")
-        reserve = self.backend.cap("propose") + dev_budget * 4 + scoring * 4
+        reserve = update_reservation(self.backend, dev_budget)
         start = self.journal.get_event(f"{prefix}/started")
         if start is None:
             start = {"reserved": len(dev_starts) == 2 and self.journal.can_reserve(lane.limits, reserve),

@@ -11,7 +11,7 @@ import zlib
 from evolveengine.deepseek import Provider, ProviderBudget
 from evolveengine.pi import PiAgent
 from evolveengine.schema import Cost
-from evolveengine.spark_worker import logit_checks
+from evolveengine.spark_worker import logit_checks, truncated_vocab_control
 
 
 def provider_reply(request):
@@ -124,6 +124,7 @@ class NumericalChecksTests(unittest.TestCase):
 
         reference = rows(1.0, 0.0, -1.0)
         self.assertEqual(logit_checks(reference, reference, 3), (True, True, 0.0))
+        self.assertTrue(truncated_vocab_control(reference, reference, 3))
         self.assertFalse(logit_checks(reference, rows(1.0, 0.0), 3)[0])
         full, top, divergence = logit_checks(reference, rows(0.0, 1.0, -1.0), 3)
         self.assertTrue(full)

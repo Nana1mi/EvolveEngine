@@ -10,12 +10,16 @@ import tempfile
 import time
 
 from .deepseek import Provider, ProviderBudget
+from .controller import update_reservation
 from .engine import throughput
 from .experiment import Protocol
 from .partitions import Partitions
 from .pi import ModelStages, PiAgent
 from .schema import Cost, EvaluationReceipt, Result, canonical, digest
 from .workspace import Repository
+
+MEASUREMENT_CAP = {"S": "measure", "D": "measure_development", "T": "measure_final"}
+PREFLIGHT_SCHEMA = "evolveengine.spark-preflight.v2"
 
 
 def cost_from(record):
@@ -55,13 +59,13 @@ class SparkBackend:
             self.model = ModelStages(self.pi, self.repository, config["source_hints"])
         self.protocol = load_protocol(config["protocol"])
         self.caps = {stage: cost_from(value) for stage, value in config["caps"].items()}
-        if set(self.caps) != {"generate", "implement", "propose", "profile", "quality", "measure", "preflight"}:
+        required = {"generate", "implement", "propose", "profile", "quality", "measure", "preflight"}
+        if not required <= self.caps.keys() <= required | set(MEASUREMENT_CAP.values()):
             raise ValueError("Declare the cost cap of every operation")
         if any(cost.wall_ms < 5000 for cost in self.caps.values()):
             raise ValueError("Live operations must allow watchdog startup and cleanup")
-        if self.caps["measure"].blocks != 1 or any(
-            cost.blocks for stage, cost in self.caps.items() if stage not in {"measure", "preflight"}
-        ):
+        if any(cost.blocks != (1 if stage in MEASUREMENT_CAP.values() else 0)
+               for stage, cost in self.caps.items() if stage != "preflight"):
             raise ValueError("One timing operation must reserve one benchmark block")
 
     def initial_engine(self):
@@ -70,7 +74,9 @@ class SparkBackend:
     def read_source(self, engine, path):
         return self.repository.source(engine, path)
 
-    def cap(self, stage):
+    def cap(self, stage, *, partition="S"):
+        if stage == "measure":
+            return self.caps.get(MEASUREMENT_CAP[partition], self.caps["measure"])
         return self.caps[stage]
 
     def run(self, stage, request, cap, node):
@@ -87,7 +93,7 @@ class SparkBackend:
     def _remote(self, stage, request, cap, node):
         if node not in self.nodes:
             raise ValueError("Node is outside the registered Spark pool")
-        timed_blocks = {"measure": 1, "preflight": 2}.get(stage, 0)
+        timed_blocks = int(stage == "measure")
         worktree = shlex.quote(self.config["remote_project"])
         settings = shlex.quote(self.config["remote_worker_config"])
         command = f"cd {worktree} && python3 -m evolveengine.spark_worker --config {settings}"
@@ -116,6 +122,30 @@ class SparkBackend:
 
     def pilot_preflight(self, partitions, targets=None):
         targets = self.nodes if targets is None else tuple(targets)
+        bounds = self.reservation_diagnostics()
+        pi = self._preflight_agent()
+        nodes = {}
+        block = partitions.block("search", "S", "preflight/smoke", 8)
+        for node in targets:
+            nodes[node] = self._preflight_node(node, partitions, block)
+        if len({item["sensor"]["uuid"] for item in nodes.values()}) != len(nodes):
+            raise ValueError("Different node aliases resolve to the same GPU")
+        return {"schema": PREFLIGHT_SCHEMA, "nodes": nodes, "agent": pi, "configuration_digest": digest(self.config),
+                "partition_manifest": partitions.public_manifest(), "reservation_diagnostics": bounds}
+
+    def reservation_diagnostics(self):
+        core = sum((self.cap(stage) for stage in ("profile", "generate", "implement", "quality")), Cost())
+        step = core + self.cap("measure") * 2
+        bounds = {name: step.fits(getattr(self.protocol, name))
+                  for name in ("main", "development", "causal", "bank")}
+        update = update_reservation(self, self.protocol.development)
+        windows = [{"at_ms": opening,
+                    "can_reserve_from_window_start": (Cost(wall_ms=opening) + update).fits(self.protocol.main)}
+                   for opening in self.protocol.windows_ms]
+        return {"one_step_reserved_ceiling": step.record(), "one_step_ceiling_fits": bounds,
+                "one_harness_update": update.record(), "windows": windows}
+
+    def _preflight_agent(self):
         pi = self.pi.preflight()
         with ProviderBudget(self.provider, self.cap("generate")) as broker:
             with tempfile.TemporaryDirectory(prefix="evolve-preflight-") as work:
@@ -123,29 +153,58 @@ class SparkBackend:
             if response != {"ready": True} or not broker.rows or broker.failure:
                 raise ValueError("Pi to DeepSeek preflight could not verify a metered response")
             pi["metered_probe"] = broker.rows
-        nodes = {}
-        block = partitions.block("search", "S", "preflight/smoke", 8)
-        for node in targets:
-            result = self._remote("preflight", {"engine": self.initial_engine(), "block": block},
-                                  self.cap("preflight"), node)
-            if result.status != "ok":
-                raise ValueError(f"{node} failed Spark preflight: {result.detail}")
-            receipt = result.data
-            if not EvaluationReceipt(**receipt["receipt"]).passed:
-                raise ValueError(f"{node} failed the E0 quality gates: {receipt['receipt']['checks']}")
-            first, second = (throughput(item, block) for item in receipt["timing"])
-            gap = abs(math.log(second / first))
-            if gap > self.config["max_preflight_drift"]:
-                raise ValueError(f"{node} exceeded the configured E0 stability allowance: {gap:.4f}")
-            nodes[node] = {"driver": receipt["sensor_before"]["driver"], "sensor": receipt["sensor_before"],
-                           "runtime": receipt["runtime"], "runtime_image": receipt["image"],
-                           "engine_revision": receipt["engine_revision"], "model_digest": receipt["model_digest"],
-                           "log_drift": gap, "rates": [first, second], "cost": result.cost.record(),
-                           "quality": receipt["receipt"], "profile": receipt["profile"]}
-        if len({item["sensor"]["uuid"] for item in nodes.values()}) != len(nodes):
-            raise ValueError("Different node aliases resolve to the same GPU")
-        return {"nodes": nodes, "agent": pi, "configuration_digest": digest(self.config),
-                "partition_manifest": partitions.public_manifest()}
+        return pi
+
+    def _preflight_node(self, node, partitions, block):
+        engine = self.initial_engine()
+        probe = self.cap("preflight")
+        result = self._remote("preflight", {"engine": engine, "block": block}, probe, node)
+        if result.status != "ok" or not result.cost.fits(probe):
+            raise ValueError(f"{node} failed Spark preflight: {result.detail or 'probe exceeded its reservation'}")
+        receipt = result.data
+        if not EvaluationReceipt(**receipt["receipt"]).passed:
+            raise ValueError(f"{node} failed the E0 quality gates: {receipt['receipt']['checks']}")
+        if receipt.get("negative_controls", {}).get("truncated_vocab_rejected") is not True:
+            raise ValueError(f"{node} did not reject the truncated-vocabulary control")
+        costs = result.cost
+        calibration = {}
+        controls = dict(receipt["negative_controls"])
+        repeats = self.config.get("preflight_repeats", 2)
+        if type(repeats) is not int or repeats < 2:
+            raise ValueError("Preflight needs at least two independent timings of each block shape")
+        for purpose, partition, size in (("search", "S", 8), ("development", "D", 16),
+                                         ("final", "T", self.protocol.final_count)):
+            # Only public prompts are used. The reservation matches the real job shape.
+            sample = partitions.block("search", "S", f"preflight/calibration/{purpose}", size)
+            cap = self.cap("measure", partition=partition)
+            rates, durations = [], []
+            for trial in range(repeats):
+                timing = self._remote("measure", {"engine": engine, "block": sample}, cap, node)
+                if timing.status != "ok" or not timing.cost.fits(cap):
+                    detail = timing.detail or "block exceeded its reservation"
+                    raise ValueError(f"{node} failed the {purpose} calibration ({size} requests): {detail}")
+                rates.append(throughput(timing.data, sample))
+                durations.append(timing.cost.wall_ms)
+                costs += timing.cost
+                if partition == "S" and trial == 0:
+                    first, *rest = timing.data["requests"]
+                    short = {**first, "output_tokens": first["output_tokens"] - 1}
+                    try:
+                        throughput({**timing.data, "requests": [short, *rest]}, sample)
+                    except ValueError:
+                        controls["short_response_rejected"] = True
+                    else:
+                        raise ValueError(f"{node} did not reject the short-response control")
+            drift = math.log(max(rates) / min(rates))
+            if drift > self.config["max_preflight_drift"]:
+                raise ValueError(f"{node} {purpose} E0 blocks exceeded the configured stability allowance: {drift:.4f}")
+            calibration[purpose] = {"request_count": size, "rates": rates, "elapsed_ms": durations,
+                                    "max_abs_log_ratio": drift, "per_block_cap": cap.record()}
+        return {"driver": receipt["sensor_before"]["driver"], "sensor": receipt["sensor_before"],
+                "runtime": receipt["runtime"], "runtime_image": receipt["image"],
+                "engine_revision": receipt["engine_revision"], "model_digest": receipt["model_digest"],
+                "calibration": calibration, "cost": costs.record(),
+                "quality": receipt["receipt"], "profile": receipt["profile"], "negative_controls": controls}
 
 
 def data_partitions(config, seed, salt=None, **keys):

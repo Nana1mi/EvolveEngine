@@ -2,8 +2,10 @@
 
 import argparse
 import base64
+from collections import deque
 from contextlib import contextmanager
 import hashlib
+from itertools import cycle
 import json
 from pathlib import Path
 import queue
@@ -219,32 +221,61 @@ def logit_checks(reference, candidate, vocab_size):
     return bool(full), bool(top), maximum_kl
 
 
+def quality_prompts(prompts, count):
+    if type(count) is not int or not 1 <= count <= len(prompts):
+        raise ValueError("Quality gate needs a positive sample count within the locked request pool")
+    by_length = {length: deque(prompt for prompt in prompts if len(prompt) == length)
+                 for length in sorted({len(prompt) for prompt in prompts})}
+    lengths = list(by_length)
+    # Cover the range before taking a second middle-bucket sample.
+    if lengths == [128, 512, 2048]:
+        lengths.append(512)
+    selected = []
+    for length in cycle(lengths):
+        if by_length[length]:
+            selected.append(by_length[length].popleft())
+            if len(selected) == count:
+                return selected
+
+
+def truncated_vocab_control(reference, candidate, vocab_size):
+    first = next(iter(candidate))
+    values = zlib.decompress(base64.b64decode(candidate[first]))
+    shortened = base64.b64encode(zlib.compress(values[:-4])).decode("ascii")
+    full, _, _ = logit_checks(reference, {**candidate, first: shortened}, vocab_size)
+    return not full
+
+
 def quality(config, tree, block, deadline, role):
     # Independent model process writes reference results into the host evaluator's memory.
-    count = config["quality_samples"]
-    prompts = block["prompts"][:count]
+    prompts = quality_prompts(block["prompts"], config["quality_samples"])
     length = block["max_new_tokens"]
     positions = [item for item in (0, 1, 2, 16, 64, 127) if item < length]
     eos_prompts = config["eos_probes"][role]
-    if type(count) is not int or not 1 <= count <= len(block["prompts"]) or not eos_prompts:
-        raise ValueError("Quality gate needs a positive sample count and independent EOS probes")
+    if not eos_prompts:
+        raise ValueError("Quality gate needs independent EOS probes")
     with Container(config, None, deadline, reference=True) as reference:
         expected = [reference.token(prompt, length, positions=positions) for prompt in prompts]
         termination = [reference.token(prompt, length, ignore_eos=False) for prompt in eos_prompts]
     checks = dict.fromkeys(("launch", "full_vocab", "kl", "top1", "sequence", "output_length", "eos", "kv_isolation"), True)
     checks["eos"] = any(row["finish_reason"] == "eos" and len(row["ids"]) < length for row in termination)
     records = []
+    controls = {}
     with Container(config, tree, deadline) as worker:
         for prompt, answer in zip(prompts, expected):
             observed = worker.token(prompt, length)
             forced = worker.token(prompt, length, positions=positions, forced=answer["ids"])
             full, top, kl = logit_checks(answer["logits"], forced["logits"], config["vocab_size"])
+            if role == "preflight" and full and not records:
+                controls["truncated_vocab_rejected"] = truncated_vocab_control(
+                    answer["logits"], forced["logits"], config["vocab_size"]
+                )
             checks["full_vocab"] &= full
             checks["kl"] &= kl is not None and kl <= config["max_kl"]
             checks["top1"] &= top
             checks["sequence"] &= observed["ids"] == answer["ids"]
             checks["output_length"] &= observed["output_tokens"] == length and observed["finish_reason"] == "length"
-            records.append({"kl": kl, "top1": top, "tokens": observed["output_tokens"]})
+            records.append({"kl": kl, "top1": top, "input_tokens": len(prompt), "tokens": observed["output_tokens"]})
         for prompt, answer in zip(eos_prompts, termination):
             observed = worker.token(prompt, length, ignore_eos=False)
             checks["eos"] &= observed["ids"] == answer["ids"] and observed["finish_reason"] == answer["finish_reason"]
@@ -252,7 +283,7 @@ def quality(config, tree, block, deadline, role):
         checks["kv_isolation"] = repeated["ids"] == expected[0]["ids"]
         hardware = worker.info
     return {"receipt": {"passed": all(checks.values()), "checks": checks},
-            "samples": records, "runtime": hardware}
+            "samples": records, "runtime": hardware, "negative_controls": controls}
 
 
 def run(config, job):
@@ -284,12 +315,10 @@ def run(config, job):
                     raise ValueError("The supplied model assets are incompatible with this Qwen3 protocol")
                 result = quality(config, tree, job["block"], deadline, "preflight")
                 with Container(config, tree, deadline) as worker:
-                    first = measure(worker, job["block"])
-                    second = measure(worker, job["block"])
                     profiling = profile(worker, config)
                 if not profiling["evidence"]["kineto_gpu_activity_count"]:
                     raise ValueError("No GPU activity observed during the SM121 profiling probe")
-                result.update({"timing": [first, second], "model_digest": actual,
+                result.update({"model_digest": actual,
                                "image": config["image"], "engine_revision": repository.revision,
                                "profile": profiling["evidence"]})
             else:

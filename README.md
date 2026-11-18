@@ -45,7 +45,7 @@ python -m evolveengine preflight --config .evolveengine/controller.json --salt-f
 python -m evolveengine optimize --config .evolveengine/controller.json --salt-file .evolveengine/development.key --node spark-1 --preflight-receipt .evolveengine/one-node-preflight.json --steps 2 --output .evolveengine/p1
 ```
 
-在权重所在主机执行模型哈希命令。若控制器在 Windows 上，可用 `["node","固定版本 Pi 的 dist/bundle/cli.js 绝对路径"]` 配置 `pi_command`。预检核对 Pi 版本、DeepSeek 元数据与实际用量，以及 Spark UUID、镜像、模型资产、运行时版本、独立参考质量门、Profiler 和 E0 两次测量。更换镜像、模型、Kernel 或协议参数后重新预检。
+在权重所在主机执行模型哈希命令。若控制器在 Windows 上，可用 `["node","固定版本 Pi 的 dist/bundle/cli.js 绝对路径"]` 配置 `pi_command`。预检核对 Pi 版本、DeepSeek 元数据与实际用量，以及 Spark UUID、镜像、模型资产、运行时版本、独立参考质量门和 Profiler。每台 Spark 都用同样的公开 E0 请求形状，分别重复运行 8 请求搜索块、16 请求晋级块和正式计时块。每种规格以各自的实际超时运行，报告吞吐波动、含启动的总耗时和削短响应、截断 logits 的拒绝结果。预检报告也给出按配置上限估算的一步预算与策略验证预算。更换环境或协议参数后重新预检。
 
 真实优化路径通过 Pi 的 `read`、`edit` 和 Linux 上受限的 `bash` 实现单个候选。工具只操作固定 Git 快照中允许的源码。实现后独立请求同一模型审计实际 diff，审计开销计入实现阶段。最后由程序执行文件范围和正确性门禁。
 

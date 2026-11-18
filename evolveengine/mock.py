@@ -37,7 +37,7 @@ class MockBackend:
             return engine["edits"].get(path, BASE_TEXT)
         return None
 
-    def cap(self, stage):
+    def cap(self, stage, *, partition="S"):
         return COSTS[stage]
 
     def run(self, stage, request, cap, node):

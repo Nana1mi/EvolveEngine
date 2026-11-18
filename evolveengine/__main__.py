@@ -17,7 +17,7 @@ from .mock import MockBackend
 from .partitions import Partitions
 from .reports import summarize
 from .schema import digest
-from .spark import SparkBackend, data_partitions
+from .spark import PREFLIGHT_SCHEMA, SparkBackend, data_partitions
 
 
 def write_json(path, data):
@@ -91,8 +91,8 @@ def live(args):
         write_json(args.output, evidence)
         return {"passed": True, "nodes": list(evidence["nodes"]), "receipt": str(args.output)}
     evidence = json.loads(read_json(args.preflight_receipt))
-    if evidence["configuration_digest"] != digest(config):
-        raise ValueError("Preflight receipt does not match the controller config")
+    if evidence.get("schema") != PREFLIGHT_SCHEMA or evidence["configuration_digest"] != digest(config):
+        raise ValueError("Run the current Spark preflight with the configured operation caps")
     nodes = [args.node] if args.command == "optimize" else list(backend.nodes)
     if any(node not in evidence["nodes"] for node in nodes):
         raise ValueError("Every selected Spark node requires a passing receipt")
