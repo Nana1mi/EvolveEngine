@@ -2,8 +2,10 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from evolveengine.controller import Controller, Lane
+from evolveengine.experiment import seal_pair
 from evolveengine.journal import Journal
 from evolveengine.mock import MockBackend
 from evolveengine.partitions import Partitions
@@ -48,6 +50,27 @@ class PreflightTests(unittest.TestCase):
     def setUpClass(cls):
         cls.config = json.loads(Path("configs/spark.controller.example.json").read_text(encoding="utf-8"))
         cls.partitions = Partitions(12, b"s" * 32, final_salt=b"t" * 32)
+
+    def test_small_real_node_pools_are_allowed_without_weakening_v1(self):
+        for nodes in (["gb-a"], ["gb-a", "gb-b"]):
+            with self.subTest(nodes=nodes):
+                probe = SparkProbe({**self.config, "nodes": nodes})
+                receipt = probe.pilot_preflight(self.partitions.development_view())
+                self.assertEqual(list(receipt["nodes"]), nodes)
+                with self.assertRaisesRegex(ValueError, "Four distinct"):
+                    seal_pair(None, probe, None, None, nodes, 0, {})
+        for bad in ([], ["same", "same"], "abcd"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                SparkProbe({**self.config, "nodes": bad})
+
+    def test_invalid_target_set_rejected_before_metered_probe(self):
+        probe = SparkProbe(self.config)
+        with patch.object(probe, "_preflight_agent") as agent:
+            for targets in ([], ["outside"], ["spark-1", "spark-1"]):
+                with self.subTest(targets=targets), self.assertRaises(ValueError):
+                    probe.pilot_preflight(self.partitions.development_view(), targets)
+            agent.assert_not_called()
+            self.assertFalse(probe.calls)
 
     def test_calibrates_all_shapes_with_public_data_and_real_caps(self):
         probe = SparkProbe(self.config)

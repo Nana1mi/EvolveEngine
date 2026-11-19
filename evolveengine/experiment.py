@@ -135,10 +135,14 @@ def final_comparison(controller, lane, key, reference, submissions, protocol, *,
     return result
 
 
-def seal_pair(journal, backend, partitions, protocol, nodes, replicate, environment, *, causal_points=3,
-              ablation=False):
+def require_v1_nodes(nodes):
     if len(nodes) != 4 or len(set(nodes)) != 4:
         raise ValueError("Four distinct node identities are required for the paired schedule")
+
+
+def seal_pair(journal, backend, partitions, protocol, nodes, replicate, environment, *, causal_points=3,
+              ablation=False):
+    require_v1_nodes(nodes)
     if type(replicate) is not int or replicate < 0:
         raise ValueError("Replicate must be a nonnegative independent lineage number")
     partitions = partitions.development_view()

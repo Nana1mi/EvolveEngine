@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 from .controller import Controller, Lane
-from .experiment import MOCK_PROTOCOL, deploy_pair, evaluate_pair, seal_pair, verify_submission
+from .experiment import MOCK_PROTOCOL, deploy_pair, evaluate_pair, require_v1_nodes, seal_pair, verify_submission
 from .journal import Interrupted, Journal
 from .mock import MockBackend
 from .partitions import Partitions
@@ -95,6 +95,8 @@ def token_ids(args):
 
 def live(args):
     config = json.loads(read_json(args.config))
+    if args.command == "pilot":
+        require_v1_nodes(config["nodes"])  # Reject before starting any metered or remote operation.
     backend = SparkBackend(config)
     partitions = data_partitions(config, args.seed, args.salt_file.read_bytes(),
                                  final_commitment=getattr(args, "final_commitment", None))

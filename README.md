@@ -56,6 +56,8 @@ python -m evolveengine summarize-rqa .evolveengine/rqa-0/report.json .evolveengi
 
 控制器运行在普通 CPU 主机。Spark 端用 Python 3.10+、NumPy、Git、Docker 和 NVIDIA Container Toolkit。配置 Spark 的 SSH 主机别名，并把同一版本的 EvolveEngine 和锁定提交的 mini-sglang 部署到各节点。镜像需要预装兼容 GB10 / SM121 / aarch64 的 CUDA、PyTorch、Triton、mini-sglang 所需 Kernel 和 Transformers。各节点使用同一份已下载的 Qwen3-0.6B 权重和 tokenizer。
 
+单节点联调、预检与 v2 RQ-A 不要求四台：在私有配置的 `nodes` 只列实际可用的 SSH 主机，支持一台或两台；不要为同一 GPU 配多个别名。旧 v1 `pilot` 仍须四个独立节点，不能用双节点配置冒充。SSH 须能以 `BatchMode=yes` 认证；能手工输入密码登录不等于控制器可运行。
+
 - 从 worker 模板派生各 Spark 共用的私有配置，填入镜像 digest、引擎 commit、显式 attention backend、模型目录、profile 请求和各数据区不同的自然 EOS 例子。用锁定 tokenizer 生成输入 token IDs。每个数据区至少有一个参考模型会在上限前生成 EOS 的请求。 [Worker 配置模板](configs/spark.worker.example.json)
 - 从控制器模板派生私有配置，填入节点别名、本地引擎克隆、远程目录、worker 配置哈希和请求词表哈希。两个配置均由实验者保管，lease 文件需要可写。 [控制器配置模板](configs/spark.controller.example.json)
 - 控制器安装 Pi 1.5.2，并向控制器进程提供 `DEEPSEEK_API_KEY` 环境变量。示例的 `deepseek-flash` 是 DeepSeek 官方的 V4.1 Flash 调用 ID。先导记录试调用实际返回的模型与可用指纹。正式实验锁定可验证的固定版本或响应指纹。 [DeepSeek 更新记录](https://api-docs.deepseek.com/updates/) · [Pi 自定义模型配置](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models-configuration.md)

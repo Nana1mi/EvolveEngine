@@ -1,4 +1,4 @@
-"""CPU-side backend for pinned Pi and four SSH-addressable Spark nodes."""
+"""CPU-side backend for pinned Pi and a registered pool of SSH-addressable Spark nodes."""
 
 import json
 import math
@@ -46,11 +46,13 @@ class SparkBackend:
     def __init__(self, config, *, evaluation_only=False):
         self.config = config
         self.evaluation_only = evaluation_only
-        self.nodes = tuple(config["nodes"])
-        if len(self.nodes) != 4 or len(set(self.nodes)) != 4:
-            raise ValueError("Configure four distinct OpenSSH host aliases")
-        if not all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@-]{0,120}", host) for host in self.nodes):
-            raise ValueError("Invalid OpenSSH host alias")
+        hosts = config["nodes"]
+        if not isinstance(hosts, (list, tuple)) or not hosts:
+            raise ValueError("Configure a nonempty list of OpenSSH host aliases")
+        if not all(isinstance(host, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@-]{0,120}", host)
+                   for host in hosts) or len(set(hosts)) != len(hosts):
+            raise ValueError("Invalid or duplicate OpenSSH host alias")
+        self.nodes = tuple(hosts)
         self.allowed_scope = tuple(config["editable"])
         if not evaluation_only:
             self.repository = Repository(config["engine_checkout"], config["engine_revision"], self.allowed_scope)
@@ -124,6 +126,8 @@ class SparkBackend:
 
     def pilot_preflight(self, partitions, targets=None):
         targets = self.nodes if targets is None else tuple(targets)
+        if not targets or len(set(targets)) != len(targets) or not set(targets).issubset(self.nodes):
+            raise ValueError("Preflight targets must be distinct members of the configured Spark pool")
         bounds = self.reservation_diagnostics()
         pi = self._preflight_agent()
         nodes = {}
