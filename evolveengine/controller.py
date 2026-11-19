@@ -241,7 +241,7 @@ class Controller:
         except InsufficientBudget:
             return engine_digest, "budget_stopped", evidence
 
-    def _finish(self, lane, key, checkpoint, prepared, choice, engine_digest, outcome, evidence, *, stamp=False):
+    def _finish(self, lane, key, checkpoint, prepared, choice, engine_digest, outcome, evidence, *, stamp=False, stamp_completion=False):
         path = f"{lane.path}/{key}"
         attempt_cost = self.journal.spent(path)
         admitted = None
@@ -271,11 +271,15 @@ class Controller:
         result = {"checkpoint": asdict(after), "experience": experience_digest, "outcome": outcome}
         if admitted is not None:
             result["available_wall_ms"] = admitted
+        if stamp_completion:
+            # This timestamp belongs to the recoverable (E,M) event, not to a previous
+            # engine admission. A crash before /finished must not backdate a new memory.
+            result["completed_wall_ms"] = self.journal.observed_wall_ms(lane.path)
         self.journal.event(f"{path}/finished", result)
         return result
 
     def step(self, lane, key, checkpoint, *, memory_enabled=True, block_id=None, paired=False, prepared=None,
-             stamp_mainline=False):
+             stamp_mainline=False, stamp_completion=False):
         path = f"{lane.path}/{key}"
         saved = self.journal.get_event(f"{path}/finished")
         if saved is not None:
@@ -285,7 +289,8 @@ class Controller:
             prepared = self.prepare(lane, key, checkpoint, memory_enabled, paired=paired)
         choice = self._choose(lane, key, checkpoint, prepared)
         attempt = self._attempt(lane, key, checkpoint, prepared, choice, block_id or path)
-        return self._finish(lane, key, checkpoint, prepared, choice, *attempt, stamp=stamp_mainline)
+        return self._finish(lane, key, checkpoint, prepared, choice, *attempt,
+                            stamp=stamp_mainline or stamp_completion, stamp_completion=stamp_completion)
 
     def _confirm(self, lane, key, name, parent, candidate):
         timing = self.backend.cap("measure")
@@ -471,7 +476,8 @@ class Controller:
         return {"rates": rates, "gates": checks, "identical_engine": False, "log_gain": gain}
 
     def run(self, lane, checkpoint, steps, *, memory_enabled=True,
-            windows=(), dev_starts=(), dev_budget=Cost(), dev_steps=1, track_budget_points=False):
+            windows=(), dev_starts=(), dev_budget=Cost(), dev_steps=1, track_budget_points=False,
+            track_completions=False):
         if checkpoint.environment_digest != self.environment:
             raise ValueError("Checkpoint environment is incompatible")
         prefix = f"{lane.path}/run"
@@ -480,6 +486,7 @@ class Controller:
             "memory_enabled": memory_enabled, "harness": HARNESS_REVISION,
             "windows": list(windows), "bank": [asdict(start) for start in dev_starts],
             "dev_budget": dev_budget.record(), "dev_steps": dev_steps, "track_budget_points": track_budget_points,
+            **({"track_completions": True} if track_completions else {}),
         })
         sealed = self.journal.get_event(f"{prefix}/sealed")
         if sealed is not None:
@@ -518,7 +525,7 @@ class Controller:
                 continue
             step_key = f"step-{step_index}"
             next_step = self.step(lane, step_key, checkpoint, memory_enabled=memory_enabled,
-                                  stamp_mainline=track_budget_points)
+                                  stamp_mainline=track_budget_points, stamp_completion=track_completions)
             checkpoint = Checkpoint(**next_step["checkpoint"])
             if track_budget_points and next_step["outcome"] == "mainline":
                 admissions.append({"source_event": f"{lane.path}/{step_key}/admission",

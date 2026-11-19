@@ -16,6 +16,7 @@ from .journal import Interrupted, Journal
 from .mock import MockBackend
 from .partitions import Partitions
 from .reports import summarize
+from .rqa import SEALED as RQA_SEALED, seal_rqa, evaluate_rqa, summarize_rqa
 from .schema import digest
 from .spark import PREFLIGHT_SCHEMA, SparkBackend, data_partitions
 
@@ -40,6 +41,17 @@ def mock(args):
         if args.interrupt_at == key:
             raise Interrupted(key)
 
+    if args.command == "mock-rqa":
+        policy = json.loads(read_json(args.frozen_policy))
+        with Journal(root / "journal.sqlite3", interrupt) as journal:
+            bundle = seal_rqa(journal, backend, partitions.development_view(), MOCK_PROTOCOL, ("mock-spark",),
+                              args.replicate, {"backend": backend.version, "scenario": args.scenario, "simulated": True},
+                              policy)
+        write_json(root / "sealed_submission.json", bundle)
+        with Journal(root / "judge.sqlite3") as judge:
+            report = evaluate_rqa(judge, backend, partitions.final_view(), MOCK_PROTOCOL, bundle, bundle["digest"])
+        write_json(root / "report.json", report)
+        return {"simulated": True, "report": str((root / "report.json").resolve()), "submission_digest": bundle["digest"]}
     with Journal(root / "journal.sqlite3", interrupt) as journal:
         report = deploy_pair(
             journal, backend, partitions, MOCK_PROTOCOL,
@@ -120,6 +132,12 @@ def live(args):
             report = {"submission": submission, "events": journal.events(""),
                       "engine_checkpoints": journal.objects("engine"),
                       "budget_ledger": list(journal.budget_rows()), "experience": journal.objects("experience")}
+        elif args.command == "seal-rqa":
+            bundle = seal_rqa(journal, backend, partitions, backend.protocol, backend.nodes, args.replicate,
+                              environment, json.loads(read_json(args.frozen_policy)))
+            path = args.output / "sealed_submission.json"
+            write_json(path, bundle)
+            return {"simulated": False, "sealed_submission": str(path), "submission_digest": bundle["digest"]}
         else:
             bundle, report = seal_pair(journal, backend, partitions, backend.protocol, backend.nodes,
                                        args.replicate, environment, causal_points=args.causal_points,
@@ -135,7 +153,9 @@ def live(args):
 
 def evaluate(args):
     bundle = json.loads(read_json(args.submission))
-    payload = verify_submission(bundle, args.submission_digest)
+    is_rqa = bundle.get("payload", {}).get("schema") == RQA_SEALED
+    payload = (verify_submission(bundle, args.submission_digest, schema=RQA_SEALED) if is_rqa
+               else verify_submission(bundle, args.submission_digest))
     config = json.loads(read_json(args.config))
     if payload["environment"]["configuration"] != digest(config):
         raise ValueError("Judge controller config differs from the sealed configuration")
@@ -145,25 +165,30 @@ def evaluate(args):
                                  final_commitment=manifest["final_commitment"])
     backend = SparkBackend(config, evaluation_only=True)
     with Journal(args.output / "judge.sqlite3", enforce_wall=True) as journal:
-        report = evaluate_pair(journal, backend, partitions, backend.protocol, bundle, args.submission_digest)
+        judge = evaluate_rqa if is_rqa else evaluate_pair
+        report = judge(journal, backend, partitions, backend.protocol, bundle, args.submission_digest)
     path = args.output / "sealed_evaluation.json"
     write_json(path, report)
     return {"report": str(path), "submission_digest": args.submission_digest,
-            "rq1_status": report["sealed_evaluation"]["rq1"]["status"]}
+            **({"rq_a_statuses": [p["blind"]["status"] for p in report["points"]]} if is_rqa else
+               {"rq1_status": report["sealed_evaluation"]["rq1"]["status"]})}
 
 
 def main():
     parser = argparse.ArgumentParser(prog="python -m evolveengine")
     command = parser.add_subparsers(dest="command", required=True)
-    simulate = command.add_parser("mock", help="run the complete offline paired simulation")
-    simulate.add_argument("--output", type=Path, default=Path(".evolveengine/mock"))
-    simulate.add_argument("--seed", type=int, default=21001)
-    simulate.add_argument("--replicate", type=int, default=0)
-    simulate.add_argument("--scenario", default="accept",
-                          choices=("accept", "reject", "deviation", "quality_failure"))
-    simulate.add_argument("--ablation", action="store_true")
-    simulate.add_argument("--interrupt-at", help="fault injection at the given operation ID")
-    simulate.set_defaults(handler=mock)
+    for name in ("mock", "mock-rqa"):
+        simulate = command.add_parser(name, help="run the offline v1 pair or v2.2 frozen-policy comparison")
+        simulate.add_argument("--output", type=Path, default=Path(".evolveengine") / name)
+        simulate.add_argument("--seed", type=int, default=21001)
+        simulate.add_argument("--replicate", type=int, default=0)
+        simulate.add_argument("--scenario", default="accept", choices=("accept", "reject", "deviation", "quality_failure"))
+        if name == "mock":
+            simulate.add_argument("--ablation", action="store_true")
+        else:
+            simulate.add_argument("--frozen-policy", type=Path, required=True)
+        simulate.add_argument("--interrupt-at", help="fault injection at the given operation ID")
+        simulate.set_defaults(handler=mock)
     new_key = command.add_parser("new-seal-key", help="create private salts for independent request pools")
     new_key.add_argument("path", type=Path)
     new_key.set_defaults(handler=keygen)
@@ -177,10 +202,14 @@ def main():
     stats = command.add_parser("summarize", help="aggregate sealed independent replicate reports")
     stats.add_argument("reports", type=Path, nargs="+")
     stats.set_defaults(handler=lambda args: summarize([json.loads(read_json(path)) for path in args.reports]))
-    for name in ("preflight", "optimize", "pilot"):
+    rqstats = command.add_parser("summarize-rqa", help="aggregate only two-point, held-out v2.2 RQ-A lineages")
+    rqstats.add_argument("reports", type=Path, nargs="+")
+    rqstats.set_defaults(handler=lambda args: summarize_rqa([json.loads(read_json(path)) for path in args.reports]))
+    for name in ("preflight", "optimize", "pilot", "seal-rqa"):
         stage = command.add_parser(name, help={"preflight": "check pinned Spark/Pi runtime",
                                                "optimize": "run P1 on a single Spark",
-                                               "pilot": "run a paired Spark trial"}[name])
+                                               "pilot": "run a paired Spark trial",
+                                               "seal-rqa": "seal held-out RQ-A forks with an already frozen policy"}[name])
         stage.add_argument("--config", type=Path, required=True)
         stage.add_argument("--salt-file", type=Path, required=True)
         stage.add_argument("--seed", type=int, default=21001)
@@ -192,10 +221,13 @@ def main():
         if name == "optimize":
             stage.add_argument("--node", required=True)
             stage.add_argument("--steps", type=int, default=2)
-        if name == "pilot":
+        if name in {"pilot", "seal-rqa"}:
             stage.add_argument("--final-commitment", required=True,
                                help="public SHA-256 of an independent key held by the judge")
             stage.add_argument("--replicate", type=int, default=0)
+        if name == "seal-rqa":
+            stage.add_argument("--frozen-policy", type=Path, required=True)
+        if name == "pilot":
             stage.add_argument("--causal-points", type=int, choices=(1, 3), default=1)
             stage.add_argument("--ablation", action="store_true")
         stage.set_defaults(handler=live)

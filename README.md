@@ -36,6 +36,20 @@ python -m evolveengine mock --output .evolveengine/resume
 
 本地测试覆盖规则回放、拒绝篡改候选、引擎门禁、数据区访问、D 配对晋级以及中断恢复。模拟吞吐来自确定性测试夹具。DGX Spark 的 CUDA/SM121、Pi 工具调用与真实模型结果由 P1 实机联调获取。
 
+## v2.2 RQ-A：只测一份冻结策略，不在评估谱系上学习
+
+`mock-rqa` 与 v1 `mock`/`pilot` 是两个不同实验。下面用固定 H0 作为 H* 的离线阴性对照，两个谱系都应精确为零：
+
+```sh
+python -m evolveengine mock-rqa --frozen-policy configs/rqa.frozen-h0.example.json --replicate 0 --output .evolveengine/rqa-0
+python -m evolveengine mock-rqa --frozen-policy configs/rqa.frozen-h0.example.json --replicate 1 --output .evolveengine/rqa-1
+python -m evolveengine summarize-rqa .evolveengine/rqa-0/report.json .evolveengine/rqa-1/report.json
+```
+
+- 母链只用 H0，预先锁定 H*。在母链预算的 50%、75% 取不晚于边界的最后一个完整 `/finished`（含失败的经验）；若尚无完成步骤就取初态。记录完整 checkpoint、墙钟和来源事件；配合搜索 journal 可以恢复 E、M 及其排除表。两个续跑各自从母链出发。这**不是** v1 `S_dev` 的最佳引擎签入曲线，也不是按步数抽取的 v1 D/C 库。
+- `seal-rqa` 需要 `--frozen-policy`、已通过的 preflight 和独立终评密钥承诺（其余参数见 `--help`）。搜索机无最终 Q/T 密钥；把封包和预登记摘要交独立的 `evaluate`，用 `summarize-rqa` 汇总裁判输出的 `sealed_evaluation.json`。该入口**不生成或验证训练谱系来源**：正式使用前仍须独立冻结训练产物及留出谱系清单，不可把先导结果当作确认性证据。
+- 各点用同一盲测块上实际**交付**的输出 token/s 算对数比（某臂回退时使用实测的合法起点），不是两份 V1 归一化加速比之比。两点先等权平均，独立母链才计一个样本。双侧 95% 区间下限 > 0 判正；3% 单列。协议/冻结策略不同、重复谱系或少一个预定点均不能混报；有点准入、起点终评或计时未完成则显式列缺，不拿另一点重加权、不作正式通过判断。模拟结果永不计作实机确认。
+
 ## P1 实机配置与单节点联调
 
 控制器运行在普通 CPU 主机。Spark 端用 Python 3.10+、NumPy、Git、Docker 和 NVIDIA Container Toolkit。配置 Spark 的 SSH 主机别名，并把同一版本的 EvolveEngine 和锁定提交的 mini-sglang 部署到各节点。镜像需要预装兼容 GB10 / SM121 / aarch64 的 CUDA、PyTorch、Triton、mini-sglang 所需 Kernel 和 Transformers。各节点使用同一份已下载的 Qwen3-0.6B 权重和 tokenizer。

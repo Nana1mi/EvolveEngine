@@ -272,34 +272,41 @@ def _optimization_report(journal, manifest, sealed, d_starts, causal_bank, d_lan
     return values
 
 
-def verify_submission(bundle, expected_digest):
+def verify_submission(bundle, expected_digest, *, schema="evolveengine.sealed-pair.v2"):
     if not valid_digest(expected_digest) or bundle.get("digest") != expected_digest:
         raise ValueError("Sealed submission does not match the registered digest")
     payload = bundle["payload"]
-    if digest(payload) != expected_digest or payload["schema"] != "evolveengine.sealed-pair.v2":
+    if digest(payload) != expected_digest or payload["schema"] != schema:
         raise ValueError("Sealed submission contents or schema are invalid")
     if payload["run_manifest"].get("harness_revision") != HARNESS_REVISION:
         raise ValueError("Sealed harness revision differs; evaluate old submissions with their original judge")
     return payload
 
 
-def evaluate_pair(journal, backend, partitions, protocol, bundle, expected_digest):
-    payload = verify_submission(bundle, expected_digest)
+def open_sealed_judge(journal, backend, partitions, protocol, bundle, expected_digest, *, schema):
+    payload = verify_submission(bundle, expected_digest, schema=schema)
     partitions = partitions.final_view()
     manifest = payload["run_manifest"]
     if canonical(partitions.public_manifest()) != canonical(manifest["partitions"]):
         raise ValueError("Judge request configuration differs from the sealed run")
     if canonical(asdict(protocol)) != canonical(manifest["protocol"]):
         raise ValueError("Judge protocol differs from the sealed run")
-    public_block = process_block(partitions, manifest["replicate"])
-    if digest(public_block) != manifest["S_dev_block_digest"]:
-        raise ValueError("Public budget-point block differs from the precommitted one")
     controller = Controller(journal, backend, partitions, payload["environment"])
     if controller.environment != manifest["environment"]:
         raise ValueError("Sealed environment is invalid")
     for address, engine in payload["engines"].items():
         if journal.put("engine", engine) != address:
             raise ValueError("Invalid sealed engine digest")
+    return payload, controller
+
+
+def evaluate_pair(journal, backend, partitions, protocol, bundle, expected_digest):
+    payload, controller = open_sealed_judge(journal, backend, partitions, protocol, bundle, expected_digest,
+                                            schema="evolveengine.sealed-pair.v2")
+    manifest = payload["run_manifest"]
+    public_block = process_block(controller.partitions, manifest["replicate"])
+    if digest(public_block) != manifest["S_dev_block_digest"]:
+        raise ValueError("Public budget-point block differs from the precommitted one")
     evaluator = Lane(f'replicate-{manifest["replicate"]}/evaluation', "research_overhead",
                      manifest["nodes"][-1], Cost(**payload["remaining_evaluation_budget"]))
     journal.event(f"{evaluator.path}/input", {"submission_digest": expected_digest})

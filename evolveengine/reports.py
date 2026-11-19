@@ -12,7 +12,7 @@ T95 = (12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
        2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042)
 
 
-def interval(values):
+def paired_interval(values):
     output = {"n": len(values), "paired_log_differences": values}
     if not values:
         return output
@@ -28,7 +28,14 @@ def interval(values):
     )
     half_width = critical * stdev(values) / math.sqrt(len(values))
     output["ci95"] = [math.expm1(average - half_width), math.expm1(average + half_width)]
-    output["meets_design_threshold"] = output["ci95"][0] > 0 and output["geometric_advantage"] >= 0.03
+    return output
+
+
+def interval(values):
+    """Legacy v1 joint decision; v2.2 RQ-A uses only the interval for its test."""
+    output = paired_interval(values)
+    if "ci95" in output:
+        output["meets_design_threshold"] = output["ci95"][0] > 0 and output["geometric_advantage"] >= 0.03
     return output
 
 
@@ -105,6 +112,8 @@ def summarize(reports):
     failures = {"fixed": 0, "evolving": 0, "invalid_causal_reference": 0}
     for report in reports:
         manifest = report["run_manifest"]
+        if manifest.get("endpoint"):
+            raise ValueError("Expected v1 paired reports; use summarize-rqa for the frozen-policy endpoint")
         simulated = manifest.get("simulated", simulated)
         signature = (manifest.get("harness_revision"), manifest["protocol"],
                      manifest["initial_engine"], manifest["initial_policy"],
