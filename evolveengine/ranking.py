@@ -50,9 +50,9 @@ def rank(observation, pool, policy):
         mismatch = primary != "unknown" and candidate.bottleneck_class != primary
         action = candidate.action_tag
         rule_order = len(promotions)
-        if candidate.bottleneck_class == primary and action in promotions:
+        if action in promotions:
             rule_order = promotions.index(action)
-        return (mismatch, rule_order, BANDS.index(candidate.cost_band),
+        return (rule_order, mismatch, BANDS.index(candidate.cost_band),
                 CLASSES.index(candidate.bottleneck_class), candidate.candidate_id)
 
     return [candidate.candidate_id for candidate in sorted(candidates, key=priority)]

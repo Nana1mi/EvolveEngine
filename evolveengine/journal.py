@@ -140,10 +140,10 @@ class Journal:
                 return False
         return True
 
-    def begin_scope(self, prefix):
+    def begin_scope(self, prefix, *, elapsed_ms=0):
         key = prefix + "/wall_start"
         if self.enforce_wall and self.get_event(key) is None:
-            self.event(key, {"started_ns": time.time_ns()})
+            self.event(key, {"started_ns": time.time_ns() - elapsed_ms * 10**6})
 
     def wall_elapsed(self, prefix, spent):
         if not self.enforce_wall:
@@ -152,12 +152,14 @@ class Journal:
         elapsed = (time.time_ns() - started["started_ns"]) // 10**6 if started else 0
         return max(spent.wall_ms, elapsed)
 
-    def can_finish(self, scopes, operations):
-        missing = Cost()
-        for key, cap in operations:
+    def can_fund(self, operations):
+        """Reserve original caps, including both logical charges to any shared ancestor."""
+        needed = {}
+        for key, scopes, cap in operations:
             if self.db.execute("SELECT 1 FROM operations WHERE id=?", (key,)).fetchone() is None:
-                missing += cap
-        return not any(missing.values()) or self.can_reserve(scopes, missing)
+                for scope in scopes:
+                    needed[scope] = needed.get(scope, Cost()) + cap
+        return all(self.can_reserve((scope,), total) for scope, total in needed.items())
 
     def _settle(self, key, result):
         rows = self.db.execute(
@@ -174,30 +176,43 @@ class Journal:
                     self._settle(row["id"], Result({}, Cost(**row["reserved"]), "uncertain",
                                                    "interrupted after reservation"))
 
-    def call(self, key, request, cap, scopes, owner, node, execute, physical=True):
+    def call(self, key, request, cap, scopes, owner, node, execute, *, mirror=None):
+        """A coupled call reserves and settles two arm-local rows atomically, but executes once."""
+        postings = [(key, scopes, True)]
+        if mirror is not None:
+            peer_key, peer_scopes = mirror
+            postings.append((peer_key, peer_scopes, False))
         request_hash = digest(request)
+        reserved = canonical(cap.record())
         with self.transaction():
-            row = self.db.execute("SELECT * FROM operations WHERE id=?", (key,)).fetchone()
-            if row is not None:
-                if (row["input_hash"] != request_hash or row["reserved"] != canonical(cap.record())
-                        or row["owner"] != owner or row["node"] != node or row["physical"] != physical):
-                    raise ValueError(f"Operation ID reused with different inputs: {key}")
-                if row["receipt"] is None:
-                    raise ValueError(f"Operation remains unsettled: {key}")
-                receipt = json.loads(row["receipt"])
-                return Result(receipt["data"], Cost(**receipt["cost"]), receipt["status"], receipt["detail"])
-            if not self.can_reserve(scopes, cap):
+            receipts = []
+            for job, _, paid in postings:
+                row = self.db.execute("SELECT * FROM operations WHERE id=?", (job,)).fetchone()
+                if row is not None:
+                    if (row["input_hash"] != request_hash or row["reserved"] != reserved
+                            or row["owner"] != owner or row["node"] != node or row["physical"] != paid):
+                        raise ValueError(f"Operation ID reused with different inputs: {job}")
+                    receipts.append(row["receipt"])
+            if receipts:
+                if len(receipts) != len(postings) or None in receipts or len(set(receipts)) != 1:
+                    raise ValueError(f"Incomplete or inconsistent logical receipts: {key}")
+                r = json.loads(receipts[0])
+                return Result(r["data"], Cost(**r["cost"]), r["status"], r["detail"])
+            if not self.can_fund((job, limits, cap) for job, limits, _ in postings):
                 raise InsufficientBudget(key)
-            self.db.execute(
-                "INSERT INTO operations VALUES (?,?,?,?,?,?,?,NULL,NULL)",
-                (key, owner, node, request_hash, canonical(cap.record()), time.time_ns(), int(physical)),
-            )
+            now = time.time_ns()
+            for job, _, paid in postings:
+                self.db.execute("INSERT INTO operations VALUES (?,?,?,?,?,?,?,NULL,NULL)",
+                                (job, owner, node, request_hash, reserved, now, int(paid)))
         if self.on_reserved:
-            self.on_reserved(key)
+            for job, _, _ in postings:
+                self.on_reserved(job)
         result = execute()
         if result.status not in {"ok", "failed", "timeout", "uncertain"}:
             raise ValueError("Invalid backend operation status")
         if not result.cost.fits(cap):
             result = Result(result.data, result.cost, "failed", "operation exceeded reservation")
-        self._settle(key, result)
+        with self.transaction():
+            for job, _, _ in postings:
+                self._settle(job, result)
         return result

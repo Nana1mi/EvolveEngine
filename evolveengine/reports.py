@@ -101,12 +101,13 @@ def summarize(reports):
     for report in reports:
         manifest = report["run_manifest"]
         simulated = manifest.get("simulated", simulated)
-        signature = (manifest["protocol"], manifest["initial_engine"], manifest["initial_policy"],
+        signature = (manifest.get("harness_revision"), manifest["protocol"],
+                     manifest["initial_engine"], manifest["initial_policy"],
                      manifest["environment"], manifest["causal_points"], manifest["ablation"])
         if protocol is None:
             protocol = signature
         if protocol != signature or manifest["replicate"] in replicates:
-            raise ValueError("Reports need a shared protocol/environment and unique replicate IDs")
+            raise ValueError("Reports need a shared harness revision, protocol/environment and unique replicate IDs")
         replicates.add(manifest["replicate"])
         evaluated = report["sealed_evaluation"]
         rq1 = difference(evaluated["rq1"], "fixed", "evolving")

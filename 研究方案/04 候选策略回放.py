@@ -10,7 +10,7 @@ CLASSES = ("host_dispatch", "compute", "memory", "kv_cache")
 PHASES = ("prefill", "decode", "mixed", "unknown")
 GAPS = ("low", "high", "unknown")
 COSTS = ("low", "medium", "high")
-ACTIONS = ("pack_request_metadata", "reduce_launch_gap", "improve_locality", "other")
+ACTIONS = ("pack_request_metadata", "reduce_launch_gap", "improve_locality", "fuse_compute", "manage_kv_cache", "other")
 
 EXAMPLE = {
     "observation": {
@@ -76,9 +76,9 @@ def rank(observation, pool, rule=None):
     def priority(candidate):
         primary = observation["primary_class"]
         mismatch = primary != "unknown" and candidate["class"] != primary
-        # 受限语法只允许在瓶颈匹配档内提前一个动作，平局沿用 H0。
-        promoted = matches and primary == candidate["class"] and candidate["action_tag"] == rule["promote_action"]
-        return (mismatch, not promoted, COSTS.index(candidate["cost_band"]),
+        # 命中的登记动作可跨类提前；未命中或同档候选仍按 H0 排序。
+        promoted = matches and candidate["action_tag"] == rule["promote_action"]
+        return (not promoted, mismatch, COSTS.index(candidate["cost_band"]),
                 CLASSES.index(candidate["class"]), candidate["id"])
 
     return [item["id"] for item in sorted(pool, key=priority)]

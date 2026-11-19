@@ -160,6 +160,8 @@ class ModelStages:
                 "Propose one ranking policy from the authorized optimization attempts. "
                 "Return {policy:{rules:[{when:{registered feature:bin},promote_action}]},"
                 "basis:[attempt_id],hypothesis:string}. Cite evidence IDs from the input only. "
+                "Matching actions take priority across candidate classes (including when the observed class "
+                "is unknown); rule order then the fixed baseline breaks ties. "
                 "Retain the parent rules if there is insufficient evidence."
             )
         prompt = task + "\n" + canonical(evidence)

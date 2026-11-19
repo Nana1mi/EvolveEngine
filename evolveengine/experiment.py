@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 import math
 import statistics
 
-from .controller import Controller, Lane
+from .controller import HARNESS_REVISION, Controller, Lane
 from .engine import gate, compare_rates
 from .journal import InsufficientBudget
 from .partitions import load_bank, valid_digest
@@ -56,59 +56,80 @@ def build_bank(controller, partition, lane, engine, size, steps):
     return journal.put(f"bank_{partition}", selected)
 
 
-def final_comparison(controller, lane, key, reference, submissions, protocol):
-    journal = controller.journal
-    name = f"{lane.path}/{key}"
-    if any(row.get("checkpoint") is None for row in submissions.values()):
-        raise ValueError("Formal evaluation requires sealed submissions")
-    quality_block = controller.partitions.block("final", "Q", name + "/gate", 32)
-    engines = {label: journal.get("engine", record["checkpoint"]["engine_digest"])
-               for label, record in submissions.items()}
-    engines["reference"] = journal.get("engine", reference.engine_digest)
-    quality = {
-        label: controller._operate(lane, f"{key}/quality/{label}", "quality",
-                                   {"engine": engine, "role": "final", "block": quality_block})
-        for label, engine in engines.items()
-    }
-    if not gate(quality["reference"]):
-        return {"status": "invalid_reference", "quality": {key: val.data for key, val in quality.items()}}
-    output = {}
-    for label in submissions:
-        candidate = engines[label]
-        if not gate(quality[label]):
-            output[label] = {"status": "fallback_quality", "speedup": 1.0}
-            continue
-        ratios = []
-        candidate_requests = []
-        reference_requests = []
-        for block_index in range(protocol.final_blocks):
-            block = controller.partitions.block("final", "T", f"{name}/{block_index}", protocol.final_count)
-            order = (["reference", "candidate", "candidate", "reference"]
-                     if int(digest([key, block_index, label])[-1], 16) % 2 == 0
-                     else ["candidate", "reference", "reference", "candidate"])
+def _blind_score(controller, lane, key, label, candidate, reference, protocol, *, is_reference):
+    ratios, candidate_requests, reference_requests, block_rates = [], [], [], []
+    for index in range(protocol.final_blocks):
+        block = controller.partitions.block("final", "T", f"{lane.path}/{key}/{index}", protocol.final_count)
+        prefix = f"{key}/perf/{label}/{index}"
+        if is_reference:
+            # A real T receipt is still required; only the *contrast* is known without timing.
+            observed = controller.measure(lane, prefix + "/0", reference, block, include_requests=True)
+            if observed is None:
+                return None
+            rate, rows = observed
+            base_rate = rate
+            candidate_requests.extend(rows)
+            reference_requests.extend(rows)
+        else:
+            order = ("reference", "candidate", "candidate", "reference")
+            if int(digest([key, index, label])[-1], 16) % 2:
+                order = ("candidate", "reference", "reference", "candidate")
             rates = {"reference": [], "candidate": []}
-            for index, side in enumerate(order):
-                engine = engines["reference"] if side == "reference" else candidate
-                observed = controller.measure(lane, f"{key}/perf/{label}/{block_index}/{index}",
-                                              engine, block, include_requests=True)
+            for slot, side in enumerate(order):
+                engine = reference if side == "reference" else candidate
+                observed = controller.measure(lane, f"{prefix}/{slot}", engine, block, include_requests=True)
                 rates[side].append(None if observed is None else observed[0])
                 if observed is not None:
                     rows = reference_requests if side == "reference" else candidate_requests
                     rows.extend(observed[1])
-            if any(rate is None for rate in rates["reference"]):
-                return {"status": "invalid_reference_measurement"}
-            if any(rate is None for rate in rates["candidate"]):
-                break
-            # Counts are equal, so aggregate elapsed time using the harmonic mean.
-            ratios.append(compare_rates(statistics.harmonic_mean(rates["reference"]),
-                                        statistics.harmonic_mean(rates["candidate"])))
-        if len(ratios) == protocol.final_blocks:
-            output[label] = {"status": "valid", "speedup": math.exp(statistics.mean(ratios)),
-                             "paired_log_ratios": ratios, "latency_ms": latency_metrics(candidate_requests),
-                             "reference_latency_ms": latency_metrics(reference_requests)}
+            if None in rates["reference"]:
+                return None
+            if None in rates["candidate"]:
+                return {"status": "fallback_performance", "speedup": 1.0}
+            base_rate, rate = (statistics.harmonic_mean(rates[side]) for side in ("reference", "candidate"))
+        ratios.append(compare_rates(base_rate, rate))
+        block_rates.append({"reference": base_rate, "candidate": rate})
+    return {"status": "valid", "speedup": math.exp(statistics.mean(ratios)), "paired_log_ratios": ratios,
+            "tokens_per_second": block_rates, "latency_ms": latency_metrics(candidate_requests),
+            "reference_latency_ms": latency_metrics(reference_requests)}
+
+
+def final_comparison(controller, lane, key, reference, submissions, protocol, *, reuse_identical=None):
+    journal = controller.journal
+    name = f"{lane.path}/{key}"
+    if any(row.get("checkpoint") is None for row in submissions.values()):
+        raise ValueError("Formal evaluation requires sealed submissions")
+    if (reference.environment_digest != controller.environment or any(
+            row["checkpoint"]["environment_digest"] != controller.environment for row in submissions.values())):
+        raise ValueError("Formal comparison requires one frozen environment")
+    if reuse_identical is None:
+        reuse_identical = set(submissions) == {"parent", "proposed"}
+    addresses = {label: row["checkpoint"]["engine_digest"] for label, row in submissions.items()}
+    addresses["reference"] = reference.engine_digest
+    # Local to this sealed comparison: never reuse a D receipt or a different C point's T block.
+    unique = {reference.engine_digest: "reference"}
+    for label in sorted(submissions):
+        unique.setdefault(addresses[label], label)
+    source = {label: unique[address] if reuse_identical else label for label, address in addresses.items()}
+    engines = {label: journal.get("engine", addresses[label]) for label in dict.fromkeys(source.values())}
+    quality_block = controller.partitions.block("final", "Q", name + "/gate", 32)
+    quality = {label: controller._operate(lane, f"{key}/quality/{label}", "quality",
+                                          {"engine": engine, "role": "final", "block": quality_block})
+               for label, engine in engines.items()}
+    checks = {label: quality[origin].data for label, origin in source.items()}
+    if not gate(quality["reference"]):
+        return {"status": "invalid_reference", "quality": checks}
+    scores = {}
+    for origin in dict.fromkeys(source[label] for label in submissions):
+        if not gate(quality[origin]):
+            scores[origin] = {"status": "fallback_quality", "speedup": 1.0}
         else:
-            output[label] = {"status": "fallback_performance", "speedup": 1.0}
-    result = {"status": "ok", "engines": output, "quality": {key: val.data for key, val in quality.items()}}
+            scores[origin] = _blind_score(controller, lane, key, origin, engines[origin], engines["reference"],
+                                         protocol, is_reference=origin == "reference")
+            if scores[origin] is None:
+                return {"status": "invalid_reference_measurement"}
+    result = {"status": "ok", "engines": {label: scores[source[label]] for label in submissions},
+              "quality": checks, "receipt_sources": source}
     journal.event(f"{name}/evaluated", result)
     return result
 
@@ -128,7 +149,8 @@ def seal_pair(journal, backend, partitions, protocol, nodes, replicate, environm
     fixed_node, evolving_node, dev_node, eval_node = allocation
     run = f"replicate-{replicate}"
     engine = backend.initial_engine()
-    manifest = {"environment": controller.environment, "initial_engine": journal.put("engine", engine),
+    manifest = {"harness_revision": HARNESS_REVISION, "environment": controller.environment,
+                "initial_engine": journal.put("engine", engine),
                 "initial_policy": controller.baseline, "replicate": replicate, "nodes": allocation,
                 "simulated": environment.get("simulated", False),
                 "protocol": asdict(protocol), "partitions": partitions.public_manifest(),
@@ -254,6 +276,8 @@ def verify_submission(bundle, expected_digest):
     payload = bundle["payload"]
     if digest(payload) != expected_digest or payload["schema"] != "evolveengine.sealed-pair.v1":
         raise ValueError("Sealed submission contents or schema are invalid")
+    if payload["run_manifest"].get("harness_revision") != HARNESS_REVISION:
+        raise ValueError("Sealed harness revision differs; evaluate old submissions with their original judge")
     return payload
 
 
@@ -276,13 +300,13 @@ def evaluate_pair(journal, backend, partitions, protocol, bundle, expected_diges
     journal.event(f"{evaluator.path}/input", {"submission_digest": expected_digest})
     journal.begin_scope(evaluator.path)
 
-    def compare(key, group):
+    def compare(key, group, *, coupled=True):
         stored = journal.get_event(f"{evaluator.path}/{key}/result")
         if stored is not None:
             return stored
         try:
             result = final_comparison(controller, evaluator, key, Checkpoint(**group["reference"]),
-                                      group["submissions"], protocol)
+                                      group["submissions"], protocol, reuse_identical=coupled)
         except InsufficientBudget:
             result = {"status": "evaluation_budget_exhausted"}
         journal.event(f"{evaluator.path}/{key}/result", result)
@@ -290,7 +314,7 @@ def evaluate_pair(journal, backend, partitions, protocol, bundle, expected_diges
 
     groups = payload["comparisons"]
     evaluation = {
-        "rq1": compare("rq1", groups["rq1"]),
+        "rq1": compare("rq1", groups["rq1"], coupled=False),
         "rq2": [compare(f"rq2-{index}", group) for index, group in enumerate(groups["rq2"])],
         "rq3_memory_off": [compare(f"rq3-{index}", group)
                            for index, group in enumerate(groups["rq3_memory_off"])],

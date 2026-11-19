@@ -23,7 +23,13 @@ python -m evolveengine mock --output .evolveengine/resume --interrupt-at replica
 python -m evolveengine mock --output .evolveengine/resume
 ```
 
-`journal.sqlite3` 保存内容寻址的 E/H/M、原始回执、操作账本与不可改写的事件。`report.json` 导出运行清单、资源、D/C 建库开销、策略晋级记录、封存版本及评估结果。D 分叉费用归 Evolving 主链，共享首轮候选池有两份逻辑扣费和一份物理执行。C 续跑与最终 Q/T 在主链封存后运行。恢复时无回执的操作以 `uncertain` 结算预留额度。
+`journal.sqlite3` 保存内容寻址的 E/H/M、原始回执、操作账本与不可改写的事件。`report.json` 导出运行清单、资源、D/C 建库开销、策略晋级记录、封存版本及评估结果。D 分叉费用归 Evolving 主链；C 续跑与独立 Q/T 裁判在主链封存后运行。
+
+- 排序规则可在 `unknown` 观测下触发，也可把指定动作跨类别提前；无命中时完全沿用 H0。规则不增删候选。
+- 仅在同一 D/C 配对的同一步共享工作：同选同一候选，共享实现、审计、门禁和筛选/复测；首个不同选择立即分开，之后不重新合并。两臂及共同外层账户按原上限预留，两份逻辑账原子结算、只实付一次；中断而无回执则均按预留记 `uncertain`。RQ1 主链和独立 A/A 噪声校准不共用吞吐读数。
+- D 上相同交付物通过 D 门禁后记 `log_gain: 0.0`，`rates` 为 `null` 值而非虚构吞吐；门禁失败不能记作合法零。C 终评在该比较内按引擎共用独立 Q/T 回执；即使与参照相同也要取得真实的质量、性能和延迟回执。运行清单的 `harness_revision` 区分新旧算法：请使用新的输出目录，旧封包用原版本裁判，不跨版本合并报告。
+
+针对上述反例单独运行：`python -m unittest discover -s tests -p test_paired_invariants.py -v`。
 
 本地测试覆盖规则回放、拒绝篡改候选、引擎门禁、数据区访问、D 配对晋级以及中断恢复。模拟吞吐来自确定性测试夹具。DGX Spark 的 CUDA/SM121、Pi 工具调用与真实模型结果由 P1 实机联调获取。
 
