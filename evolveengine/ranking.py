@@ -23,18 +23,32 @@ def policy_rules(policy):
 
 
 def freeze_pool(raw, allowed_scope):
+    return filter_pool(raw, allowed_scope, ())[0]
+
+
+def filter_pool(raw, allowed_scope, excluded):
+    """Apply the same outcome-blind exclusions in every arm; account for every raw candidate."""
     if type(raw) is not list or len(raw) > 4:
         raise ValueError("A generator response may contain at most four candidates")
     candidates = [Candidate(**item) for item in raw]
     ids = [candidate.candidate_id for candidate in candidates]
     if len(set(ids)) != len(ids):
         raise ValueError("Duplicate candidate ID")
-    kept = {}
+    kept, seen = [], set()
+    counts = dict(raw=len(raw), out_of_scope=0, pool_duplicates=0, previously_tried=0, eligible=0)
     for candidate in sorted(candidates, key=lambda item: item.candidate_id):
-        if all(in_scope(path, allowed_scope) for path in candidate.target_scope):
-            key = (candidate.action_tag, candidate.target_scope)
-            kept.setdefault(key, asdict(candidate))
-    return list(kept.values())
+        key = (candidate.action_tag, candidate.target_scope)
+        if not all(in_scope(path, allowed_scope) for path in candidate.target_scope):
+            counts["out_of_scope"] += 1
+        elif key in seen:
+            counts["pool_duplicates"] += 1
+        elif key in excluded:
+            counts["previously_tried"] += 1
+        else:
+            kept.append(asdict(candidate))
+        seen.add(key)
+    counts["eligible"] = len(kept)
+    return kept, counts
 
 
 def rank(observation, pool, policy):

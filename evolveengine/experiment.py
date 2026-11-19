@@ -8,6 +8,7 @@ from .controller import HARNESS_REVISION, Controller, Lane
 from .engine import gate, compare_rates
 from .journal import InsufficientBudget
 from .partitions import load_bank, valid_digest
+from .process_curve import measure_process_curve, process_block
 from .reports import latency_metrics, process_metrics
 from .schema import Checkpoint, Cost, canonical, digest
 
@@ -154,6 +155,7 @@ def seal_pair(journal, backend, partitions, protocol, nodes, replicate, environm
                 "initial_policy": controller.baseline, "replicate": replicate, "nodes": allocation,
                 "simulated": environment.get("simulated", False),
                 "protocol": asdict(protocol), "partitions": partitions.public_manifest(),
+                "S_dev_block_digest": digest(process_block(partitions, replicate)),
                 "causal_points": causal_points, "ablation": ablation}
     journal.event(f"{run}/manifest", manifest)
     d_lane = Lane(f"bank/D/{run}", "research_overhead", dev_node, protocol.bank)
@@ -173,9 +175,9 @@ def seal_pair(journal, backend, partitions, protocol, nodes, replicate, environm
         if lane.owner == "evolving":
             sealed[lane.owner] = controller.run(lane, start, protocol.main_steps, windows=protocol.windows_ms,
                                                 dev_starts=d_starts, dev_budget=protocol.development,
-                                                dev_steps=protocol.validation_steps)
+                                                dev_steps=protocol.validation_steps, track_budget_points=True)
         else:
-            sealed[lane.owner] = controller.run(lane, start, protocol.main_steps)
+            sealed[lane.owner] = controller.run(lane, start, protocol.main_steps, track_budget_points=True)
     journal.event(f"{run}/sealed", sealed)
     evaluator = Lane(f"{run}/causal", "research_overhead", eval_node, protocol.evaluation)
     journal.begin_scope(evaluator.path)
@@ -209,14 +211,14 @@ def seal_pair(journal, backend, partitions, protocol, nodes, replicate, environm
     bundle = journal.get_event(f"{run}/evaluation_input")
     if bundle is None:
         sealed_groups = [comparisons["rq1"], *comparisons["rq2"], *comparisons["rq3_memory_off"]]
-        engine_ids = set()
+        engine_ids = {p["engine_digest"] for submission in sealed.values() for p in submission["budget_points"]}
         for group in sealed_groups:
             engine_ids.add(group["reference"]["engine_digest"])
             engine_ids.update(value["checkpoint"]["engine_digest"] for value in group["submissions"].values())
         consumed = journal.spent(evaluator.path)
         occupied_wall = journal.wall_elapsed(evaluator.path, consumed)
         payload = {
-            "schema": "evolveengine.sealed-pair.v1",
+            "schema": "evolveengine.sealed-pair.v2",
             "run_manifest": manifest,
             "environment": environment,
             "comparisons": comparisons,
@@ -274,7 +276,7 @@ def verify_submission(bundle, expected_digest):
     if not valid_digest(expected_digest) or bundle.get("digest") != expected_digest:
         raise ValueError("Sealed submission does not match the registered digest")
     payload = bundle["payload"]
-    if digest(payload) != expected_digest or payload["schema"] != "evolveengine.sealed-pair.v1":
+    if digest(payload) != expected_digest or payload["schema"] != "evolveengine.sealed-pair.v2":
         raise ValueError("Sealed submission contents or schema are invalid")
     if payload["run_manifest"].get("harness_revision") != HARNESS_REVISION:
         raise ValueError("Sealed harness revision differs; evaluate old submissions with their original judge")
@@ -289,6 +291,9 @@ def evaluate_pair(journal, backend, partitions, protocol, bundle, expected_diges
         raise ValueError("Judge request configuration differs from the sealed run")
     if canonical(asdict(protocol)) != canonical(manifest["protocol"]):
         raise ValueError("Judge protocol differs from the sealed run")
+    public_block = process_block(partitions, manifest["replicate"])
+    if digest(public_block) != manifest["S_dev_block_digest"]:
+        raise ValueError("Public budget-point block differs from the precommitted one")
     controller = Controller(journal, backend, partitions, payload["environment"])
     if controller.environment != manifest["environment"]:
         raise ValueError("Sealed environment is invalid")
@@ -319,7 +324,10 @@ def evaluate_pair(journal, backend, partitions, protocol, bundle, expected_diges
         "rq3_memory_off": [compare(f"rq3-{index}", group)
                            for index, group in enumerate(groups["rq3_memory_off"])],
     }
-    return {"run_manifest": manifest, "submission_digest": expected_digest,
+    # Secondary research overhead comes last; it cannot displace a confirmatory measurement.
+    process = measure_process_curve(controller, evaluator, groups["rq1"]["submissions"],
+                                    manifest["initial_engine"], public_block)
+    return {"run_manifest": manifest, "submission_digest": expected_digest, "S_dev": process,
             "submission": groups["rq1"]["submissions"], "sealed_evaluation": evaluation,
             "evaluation_cost": journal.spent(evaluator.path).record(),
             "events": journal.events(evaluator.path + "/"),

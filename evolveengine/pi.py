@@ -146,13 +146,15 @@ class ModelStages:
             engine = request["engine"]
             sources = {path: (self.repository.source(engine, path) or "")[:1600] for path in self.source_hints}
             evidence = {"profile": request["profile"], "memory": request["memory"], "sources": sources,
+                        "excluded": request["excluded"], "draw_index": request["draw_index"],
                         "allowed_files": self.repository.editable,
                         "actions": ACTIONS, "bottlenecks": CLASSES, "costs": BANDS}
             task = (
                 "Propose zero to four distinct engine optimizations from this evidence. "
                 "Return {candidates:[{candidate_id,action_tag,bottleneck_class,target_scope,"
                 "hypothesis,expected_signal,cost_band,infeasible_conditions}]}. "
-                "Use the registered tags and tracked source paths only."
+                "Use registered tags and tracked source paths. Do not repeat any excluded action/target_scope "
+                "pair for this parent. On a redraw propose a different eligible idea if one exists."
             )
         else:
             evidence = {**request, "features": FEATURES, "actions": ACTIONS}

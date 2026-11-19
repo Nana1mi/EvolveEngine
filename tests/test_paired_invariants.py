@@ -121,17 +121,19 @@ class CouplingTests(unittest.TestCase):
             self.assertEqual(b.calls["implement", None], 6)
             self.assertEqual(b.calls["generate", None], 6)
 
-    def test_an_identical_retry_is_fresh_in_the_next_logical_step(self):
+    def test_unchanged_parent_is_profiled_afresh_in_the_next_logical_step(self):
         b = Probe()
         b.scenario = "quality_failure"
         with Journal(self.db) as j:
             c, start, h = self.setup_pair(j, b)
             c.paired_steps(self.lane, "retry", start, c.baseline, h, BIG, 2, memory_enabled=False)
             left, right = (self.rows(j, "retry", r) for r in ROLES)
-            self.assertEqual(left["step-0/implement"]["input_hash"], left["step-1/implement"]["input_hash"])
+            self.assertEqual(left["step-0/profile"]["input_hash"], left["step-1/profile"]["input_hash"])
+            self.assertNotEqual(left["step-0/implement"]["input_hash"], left["step-1/implement"]["input_hash"])
             for n in range(2):
-                key = f"step-{n}/implement"
-                self.assertEqual(left[key]["physical"] + right[key]["physical"], 1)
+                for stage in ("profile", "implement"):
+                    key = f"step-{n}/{stage}"
+                    self.assertEqual(left[key]["physical"] + right[key]["physical"], 1)
             self.assertEqual(b.calls["implement", None], 2)
 
     def test_first_real_flip_splits_attempt_then_future_pools(self):

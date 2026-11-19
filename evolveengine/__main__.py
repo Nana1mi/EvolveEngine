@@ -116,7 +116,7 @@ def live(args):
             start = controller.checkpoint(backend.initial_engine(), "p1")
             lane = Lane("p1", "fixed", args.node, backend.protocol.main)
             journal.event("p1/protocol", {"partitions": partitions.public_manifest()})
-            submission = controller.run(lane, start, args.steps)
+            submission = controller.run(lane, start, args.steps, track_budget_points=True)
             report = {"submission": submission, "events": journal.events(""),
                       "engine_checkpoints": journal.objects("engine"),
                       "budget_ledger": list(journal.budget_rows()), "experience": journal.objects("experience")}
@@ -199,7 +199,7 @@ def main():
             stage.add_argument("--causal-points", type=int, choices=(1, 3), default=1)
             stage.add_argument("--ablation", action="store_true")
         stage.set_defaults(handler=live)
-    judge = command.add_parser("evaluate", help="judge only precommitted engine submissions with private Q/T")
+    judge = command.add_parser("evaluate", help="judge submissions with private Q/T, then replay signed process snapshots on public S_dev")
     judge.add_argument("--config", type=Path, required=True)
     judge.add_argument("--submission", type=Path, required=True)
     judge.add_argument("--submission-digest", required=True)

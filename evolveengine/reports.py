@@ -60,7 +60,7 @@ def process_metrics(prefix, attempts, events, ledger):
             if entry["id"].startswith(prefix + "/") and entry["settled_ns"] <= cutoff:
                 spent += Cost(**entry["receipt"]["cost"])
         curve.append({"attempt": row["attempt_id"], "outcome": outcome,
-                      "observed_development_speedup": math.exp(gain), "cost": spent.record()})
+                      "cumulated_accepted_screen_speedup": math.exp(gain), "cost": spent.record()})
     fidelity = [item["evidence"]["fidelity"]["status"] for item in chosen if "fidelity" in item["evidence"]]
     updates = [item for item in events if item["id"].startswith(prefix + "/window-") and item["id"].endswith("/decided")]
     replay_rows = [item for update in updates for item in update.get("replay", [])]
@@ -69,10 +69,15 @@ def process_metrics(prefix, attempts, events, ledger):
         if entry["id"].startswith(prefix + "/window-"):
             update_cost += Cost(**entry["receipt"]["cost"])
     first = next((row["cost"] for row in curve if row["outcome"] == "mainline"), None)
+    draws = [row["counts"] for row in events if row["id"].startswith(prefix + "/step-")
+             and "/draw-" in row["id"] and "counts" in row]
+    filtered = {key: sum(row[key] for row in draws)
+                for key in ("raw", "out_of_scope", "pool_duplicates", "previously_tried", "eligible")}
     return {"step_count": len(chosen), "median_step_ms": median(costs) if costs else None,
-            "outcomes": outcomes, "fidelity_review_count": len(fidelity),
+            "outcomes": outcomes, "pool_filter_counts": filtered, "empty_draws": sum(not row["eligible"] for row in draws),
+            "fidelity_review_count": len(fidelity),
             "fidelity_pass_rate": fidelity.count("pass") / len(fidelity) if fidelity else None,
-            "first_improvement_cost": first, "development_best_curve": curve,
+            "first_improvement_cost": first, "screening_trace": curve,
             "update_decisions": [item["status"] for item in updates], "update_cost": update_cost.record(),
             "replayed_pool_count": len(replay_rows),
             "first_choice_flip_rate": (mean(row["first_choice_changed"] for row in replay_rows)

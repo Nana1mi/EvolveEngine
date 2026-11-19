@@ -68,7 +68,11 @@ class SealedEvaluationTests(unittest.TestCase):
                 latency = scores["sealed_evaluation"]["rq1"]["engines"]["fixed"]["latency_ms"]
                 self.assertEqual(latency["ttft"]["n"], 2 * MOCK_PROTOCOL.final_blocks * MOCK_PROTOCOL.final_count)
                 self.assertTrue(proving.calls)
-                self.assertTrue(all(pool in {"Q", "T"} and node == "s4" for _, pool, node in proving.calls))
+                private = [call for call in proving.calls if call[1] in {"Q", "T"}]
+                public = [call for call in proving.calls if call[:2] == ("measure", "S_dev")]
+                self.assertTrue(private and public)
+                self.assertEqual(proving.calls, private + public)
+                self.assertTrue(all(node == "s4" for _, _, node in proving.calls))
                 measured = list(proving.calls)
                 self.assertEqual(evaluate_pair(evaluation, proving, judge, MOCK_PROTOCOL, detached,
                                                report["submission_digest"]), scores)

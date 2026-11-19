@@ -62,7 +62,10 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(node["cost"]["blocks"], 6)
         self.assertTrue(node["negative_controls"]["short_response_rejected"])
         self.assertEqual(node["calibration"]["final"]["elapsed_ms"], [640, 640])
-        self.assertEqual(result["reservation_diagnostics"]["one_harness_update"]["wall_ms"], 5220000)
+        diagnostics = result["reservation_diagnostics"]
+        self.assertEqual(diagnostics["one_harness_update"]["wall_ms"], 5220000)
+        self.assertTrue(diagnostics["one_step_first_screen_fits"]["development"])
+        self.assertFalse(diagnostics["one_step_ceiling_fits"]["development"])
 
     def test_small_blocks_cannot_hide_large_block_timeout(self):
         probe = SparkProbe(self.config, fail_count=64)

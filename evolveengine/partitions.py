@@ -13,6 +13,7 @@ ACCESS = {
     "development": frozenset("SD"),
     "causal": frozenset("SC"),
     "final": frozenset("TQ"),
+    "process": frozenset({"S_dev"}),
     "admission": frozenset({"Q_admit"}),
 }
 LENGTHS = (128, 512, 512, 2048)
@@ -41,7 +42,7 @@ class Partitions:
         if type(count) is not int or count <= 0 or count % 4:
             raise ValueError("Block size must be divisible by four")
         key = f"v1/{self.seed}/{pool}/{name}".encode("utf-8")
-        if pool == "S":
+        if pool in {"S", "S_dev"}:
             seed = hashlib.sha256(key).digest()
         else:
             salt = self._final_salt if pool in {"T", "Q"} else self._development_salt

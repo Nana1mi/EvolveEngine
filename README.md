@@ -29,6 +29,9 @@ python -m evolveengine mock --output .evolveengine/resume
 - 仅在同一 D/C 配对的同一步共享工作：同选同一候选，共享实现、审计、门禁和筛选/复测；首个不同选择立即分开，之后不重新合并。两臂及共同外层账户按原上限预留，两份逻辑账原子结算、只实付一次；中断而无回执则均按预留记 `uncertain`。RQ1 主链和独立 A/A 噪声校准不共用吞吐读数。
 - D 上相同交付物通过 D 门禁后记 `log_gain: 0.0`，`rates` 为 `null` 值而非虚构吞吐；门禁失败不能记作合法零。C 终评在该比较内按引擎共用独立 Q/T 回执；即使与参照相同也要取得真实的质量、性能和延迟回执。运行清单的 `harness_revision` 区分新旧算法：请使用新的输出目录，旧封包用原版本裁判，不跨版本合并报告。
 
+- Memory 开关只控制经验是否可见；无论开关如何，生成器和过滤器都使用**本臂当前父引擎**已试的 `(动作, 目标范围)` 排除表，不含结果。有效响应过滤后为空时最多再生成 **1 次**，不重跑 profile、每次照常预留和付费；第二次仍空则 `empty_pool`，无余额则 `budget_stopped`。每次抽取在 `draw-*` 区分原始数量、越界、池内重复、历史重复和可选数量，回放按决策而非抽取次数计。
+- 两条主链按各自墙钟预算的 **0、1/4、1/2、3/4、1** 保存当时已签入的引擎。`submission.<arm>.budget_points` 可回查签入事件。封卷后 `evaluate` 先完成预定 Q/T，再在研究评估账上使用同一公开 8 请求块重测各快照与 E0。重复哈希在这条次要曲线内共用实测；无有效参照或余额不足记缺失。`S_dev.points` 是重测曲线，`process_metrics.<arm>.screening_trace` 只是被选中补丁的筛选读数，不能代替它。新封包格式为 `evolveengine.sealed-pair.v2`。
+
 针对上述反例单独运行：`python -m unittest discover -s tests -p test_paired_invariants.py -v`。
 
 本地测试覆盖规则回放、拒绝篡改候选、引擎门禁、数据区访问、D 配对晋级以及中断恢复。模拟吞吐来自确定性测试夹具。DGX Spark 的 CUDA/SM121、Pi 工具调用与真实模型结果由 P1 实机联调获取。
@@ -78,6 +81,8 @@ python -m evolveengine pilot --config .evolveengine/controller.json --salt-file 
 python -m evolveengine evaluate --config .evolveengine/controller.json --submission .evolveengine/pilot-0/sealed_submission.json --submission-digest "$SUBMISSION_DIGEST" --final-salt-file .evolveengine/judge/qt.key --output .evolveengine/judge/pilot-0
 python -m evolveengine summarize .evolveengine/judge/pilot-0/sealed_evaluation.json
 ```
+
+正式批次应在所有预定交付物锁定后统一运行 `evaluate`。预算点只增加公开 `S_dev` 测量对象；中间快照不因此获得正式 Q/T 评分，也不返回优化或晋级。
 
 默认在一个 C 检查点做先导配对续跑。`--causal-points 3` 使用早、中、晚三个检查点，`--ablation` 加跑关闭跨会话 Memory 的两组。增加独立 `--replicate` 编号和新输出目录会轮换节点职责与执行顺序。开发报告和裁判报告都记录同一个提交哈希。裁判报告含吞吐及 TTFT/TPOT 分位数。`summarize` 将同谱系的 C 结果聚合为一个统计单位，给出每对对数差、区间和失败数。
 

@@ -145,12 +145,16 @@ class Journal:
         if self.enforce_wall and self.get_event(key) is None:
             self.event(key, {"started_ns": time.time_ns() - elapsed_ms * 10**6})
 
-    def wall_elapsed(self, prefix, spent):
+    def observed_wall_ms(self, prefix, spent=None):
+        """Physical elapsed time (simulated billed time for a deterministic mock)."""
         if not self.enforce_wall:
-            return spent.wall_ms
+            return (self.spent(prefix) if spent is None else spent).wall_ms
         started = self.get_event(prefix + "/wall_start")
-        elapsed = (time.time_ns() - started["started_ns"]) // 10**6 if started else 0
-        return max(spent.wall_ms, elapsed)
+        return max(0, (time.time_ns() - started["started_ns"]) // 10**6) if started else 0
+
+    def wall_elapsed(self, prefix, spent):
+        # Budget eligibility still enforces the logical charges of shared forks as well.
+        return max(spent.wall_ms, self.observed_wall_ms(prefix, spent))
 
     def can_fund(self, operations):
         """Reserve original caps, including both logical charges to any shared ancestor."""

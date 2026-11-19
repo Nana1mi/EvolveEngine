@@ -10,7 +10,7 @@ import tempfile
 import time
 
 from .deepseek import Provider, ProviderBudget
-from .controller import update_reservation
+from .controller import EMPTY_POOL_RETRIES, update_reservation
 from .engine import throughput
 from .experiment import Protocol
 from .partitions import Partitions
@@ -18,7 +18,7 @@ from .pi import ModelStages, PiAgent
 from .schema import Cost, EvaluationReceipt, Result, canonical, digest
 from .workspace import Repository
 
-MEASUREMENT_CAP = {"S": "measure", "D": "measure_development", "T": "measure_final"}
+MEASUREMENT_CAP = {"S": "measure", "S_dev": "measure", "D": "measure_development", "T": "measure_final"}
 PREFLIGHT_SCHEMA = "evolveengine.spark-preflight.v2"
 
 
@@ -80,9 +80,11 @@ class SparkBackend:
         return self.caps[stage]
 
     def run(self, stage, request, cap, node):
+        partition = request.get("block", {}).get("partition")
+        if partition == "S_dev" and not self.evaluation_only:
+            raise PermissionError("Budget point replay is a post-seal evaluation operation")
         if self.evaluation_only:
-            partition = request.get("block", {}).get("partition")
-            if not ((stage == "measure" and partition == "T") or
+            if not ((stage == "measure" and partition in {"T", "S_dev"}) or
                     (stage == "quality" and partition == "Q" and request.get("role") == "final")):
                 raise PermissionError("Judge backend only runs sealed quality and timing operations")
             return self._remote(stage, request, cap, node)
@@ -136,13 +138,15 @@ class SparkBackend:
     def reservation_diagnostics(self):
         core = sum((self.cap(stage) for stage in ("profile", "generate", "implement", "quality")), Cost())
         step = core + self.cap("measure") * 2
-        bounds = {name: step.fits(getattr(self.protocol, name))
-                  for name in ("main", "development", "causal", "bank")}
+        ceiling = step + self.cap("generate") * EMPTY_POOL_RETRIES + self.cap("measure") * 2
+        lanes = ("main", "development", "causal", "bank")
         update = update_reservation(self, self.protocol.development)
         windows = [{"at_ms": opening,
                     "can_reserve_from_window_start": (Cost(wall_ms=opening) + update).fits(self.protocol.main)}
                    for opening in self.protocol.windows_ms]
-        return {"one_step_reserved_ceiling": step.record(), "one_step_ceiling_fits": bounds,
+        return {"one_step_first_screen": step.record(), "one_step_reserved_ceiling": ceiling.record(),
+                "one_step_first_screen_fits": {name: step.fits(getattr(self.protocol, name)) for name in lanes},
+                "one_step_ceiling_fits": {name: ceiling.fits(getattr(self.protocol, name)) for name in lanes},
                 "one_harness_update": update.record(), "windows": windows}
 
     def _preflight_agent(self):

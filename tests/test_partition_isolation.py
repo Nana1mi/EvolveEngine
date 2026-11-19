@@ -11,10 +11,12 @@ class PartitionTests(unittest.TestCase):
         left = Partitions(3, b"a" * 32, final_salt=b"c" * 32)
         right = Partitions(3, b"b" * 32, final_salt=b"d" * 32)
         for role, pool in (("search", "T"), ("updater", "D"), ("development", "C"),
-                           ("causal", "Q"), ("admission", "Q")):
+                           ("causal", "Q"), ("admission", "Q"), ("search", "S_dev"),
+                           ("updater", "S_dev"), ("process", "T"), ("process", "Q")):
             with self.assertRaises(PermissionError):
                 left.block(role, pool, "a", 8)
         self.assertEqual(left.block("search", "S", "k", 8), right.block("search", "S", "k", 8))
+        self.assertEqual(left.block("process", "S_dev", "k", 8), right.block("process", "S_dev", "k", 8))
         for pool, role in (("D", "development"), ("T", "final"), ("Q", "final")):
             rows = left.block(role, pool, "k", 8)["prompts"]
             self.assertEqual(sorted(map(len, rows)), [128, 128, 512, 512, 512, 512, 2048, 2048])

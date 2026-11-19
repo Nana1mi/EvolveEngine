@@ -5,18 +5,36 @@ import math
 
 from .engine import apply_edits, check_patch, compare_rates, gate, throughput
 from .journal import InsufficientBudget
-from .ranking import freeze_pool, policy_rules, rank, replay
+from .ranking import filter_pool, policy_rules, rank, replay
 from .schema import Candidate, Checkpoint, Cost, ExecutionContract, Experience, Observation, PatchReceipt, canonical
 
 
 H0 = {"rules": []}
-HARNESS_REVISION = "cross-class/paired-prefix-v2"
+HARNESS_REVISION = "paired-prefix/exclusions/budget-points-v3"
+EMPTY_POOL_RETRIES = 1  # Per logical step; only a well-formed but empty filtered pool is redrawn.
 STOP = {"empty_pool", "budget_stopped"}
 
 
 def update_reservation(backend, development):
     scoring = backend.cap("measure", partition="D") + backend.cap("quality")
     return backend.cap("propose") + development * 4 + scoring * 4
+
+
+def _record_budget_points(journal, prefix, wall_limit, admissions, points, *, before=None):
+    """Sign elapsed boundaries at the next tick, then carry the last incumbent through early stop.
+
+    Tick and admission times are durable: on resume the present clock cannot fill an old boundary.
+    Defer a boundary equal to the current tick until later, to include decisions in that same ms.
+    """
+    for quarter in range(len(points), 5):
+        at = wall_limit * quarter // 4
+        if quarter and before is not None and at >= before:
+            break
+        incumbent = (next(row for row in reversed(admissions) if row["available_wall_ms"] <= at)
+                     if quarter else admissions[0])
+        snapshot = {"quarter": quarter, "wall_ms": at, **incumbent}
+        journal.event(f"{prefix}/budget-point-{quarter}", snapshot)
+        points.append(snapshot)
 
 
 @dataclass(frozen=True)
@@ -80,11 +98,10 @@ class Controller:
     def _memory(self, checkpoint):
         return self.journal.get("memory", checkpoint.memory_digest)
 
-    def _memory_view(self, checkpoint, primary, enabled, *, paired=False):
+    def _memory_view(self, history, primary, enabled, *, paired=False):
         if not enabled:
             return ()
-        records = [self.journal.get("experience", address) for address in reversed(self._memory(checkpoint))]
-        records.sort(key=lambda entry: (entry["observation"] or {}).get("primary_class") != primary)
+        records = sorted(reversed(history), key=lambda entry: (entry["observation"] or {}).get("primary_class") != primary)
         selected = []
         for record in records:
             summary = {key: record[key] for key in ("parent", "outcome", "cost")}
@@ -112,33 +129,51 @@ class Controller:
             return {"failure": "profile_" + profile.status}
         observation = asdict(Observation(**profile.data["observation"]))
         self._event(lane, f"{key}/profiled", {"evidence": profile.data["evidence"], "observation": observation})
-        memory = self._memory_view(checkpoint, observation["primary_class"], memory_enabled, paired=paired)
-        generator_input = {"engine": engine,
-                           "profile": {"observation": observation, "evidence": profile.data["evidence"]},
-                           "memory": memory}
-        try:
-            generated = self._operate(lane, f"{key}/generate", "generate", generator_input)
-        except InsufficientBudget:
-            return {"failure": "budget_stopped"}
-        if generated.status != "ok":
-            return {"failure": "generate_" + generated.status}
-        try:
-            pool = freeze_pool(generated.data["candidates"], self.backend.allowed_scope)
-        except (KeyError, TypeError, ValueError) as failure:
-            return {"failure": "invalid_candidate_pool", "reason": str(failure)}
-        old_attempts = [self.journal.get("experience", address) for address in self._memory(checkpoint)]
-        previously_tried = {
-            (row["candidate"]["action_tag"], tuple(row["candidate"]["target_scope"]))
-            for row in old_attempts
-            if enabled_candidate(row, checkpoint.engine_digest)
-        } if memory_enabled else set()
-        pool = [item for item in pool
-                if (item["action_tag"], tuple(item["target_scope"])) not in previously_tried]
-        pool_digest = self.journal.put("pool", {"pool": pool, "observation": observation,
-                                                "generator_input": generator_input})
-        self._event(lane, f"{key}/pool_ready", {"pool_digest": pool_digest})
-        return {"pool": pool, "pool_digest": pool_digest, "observation": observation,
-                "memory": memory, "failure": "empty_pool" if not pool else None}
+        history = [self.journal.get("experience", address) for address in self._memory(checkpoint)]
+        memory = self._memory_view(history, observation["primary_class"], memory_enabled, paired=paired)
+        tried = set()
+        for row in history:
+            if row["parent"] == checkpoint.engine_digest and row["candidate"] is not None:
+                candidate = row["candidate"]
+                tried.add((candidate["action_tag"], tuple(candidate["target_scope"])))
+        # Only the local parent's action/scope pairs, never outcomes, arm IDs or another arm's history.
+        generator_input = {
+            "engine": engine, "profile": {"observation": observation, "evidence": profile.data["evidence"]},
+            "memory": memory, "excluded": [{"action_tag": action, "target_scope": list(scope)}
+                                          for action, scope in sorted(tried)],
+        }
+        prepared = {"observation": observation, "memory": memory}
+        failure = "empty_pool"
+        for draw in range(EMPTY_POOL_RETRIES + 1):
+            request = {**generator_input, "draw_index": draw}
+            op = "generate" if not draw else f"generate-retry-{draw}"
+            try:
+                generated = self._operate(lane, f"{key}/{op}", "generate", request)
+            except InsufficientBudget:
+                failure = "budget_stopped"
+                self._event(lane, f"{key}/draw-{draw}", {"status": failure})
+                break
+            if generated.status != "ok":
+                failure = "generate_" + generated.status
+                self._event(lane, f"{key}/draw-{draw}", {"status": failure})
+                break
+            try:
+                pool, counts = filter_pool(generated.data["candidates"], self.backend.allowed_scope, tried)
+            except (KeyError, TypeError, ValueError) as exc:
+                failure = "invalid_candidate_pool"
+                self._event(lane, f"{key}/draw-{draw}", {"status": failure, "reason": str(exc)})
+                break
+            address = self.journal.put("pool", {"pool": pool, "observation": observation, "generator_input": request})
+            self._event(lane, f"{key}/draw-{draw}", {"pool_digest": address, "counts": counts,
+                                                      "status": "eligible" if pool else "empty"})
+            prepared.update(pool=pool, pool_digest=address)
+            if pool:
+                failure = None
+                break
+        # Keep the last real pool (even an empty one followed by a denied retry), once per decision.
+        if "pool_digest" in prepared:
+            self._event(lane, f"{key}/pool_ready", {"pool_digest": prepared["pool_digest"]})
+        return {**prepared, "failure": failure}
 
     def measure(self, lane, key, engine, block, *, include_requests=False):
         result = self._operate(lane, key, "measure", {"engine": engine, "block": block})
@@ -206,9 +241,27 @@ class Controller:
         except InsufficientBudget:
             return engine_digest, "budget_stopped", evidence
 
-    def _finish(self, lane, key, checkpoint, prepared, choice, engine_digest, outcome, evidence):
+    def _finish(self, lane, key, checkpoint, prepared, choice, engine_digest, outcome, evidence, *, stamp=False):
         path = f"{lane.path}/{key}"
         attempt_cost = self.journal.spent(path)
+        admitted = None
+        if stamp and outcome == "mainline":
+            # This small durable decision precedes memory bookkeeping. A crash between the two
+            # must neither erase an on-time admission nor backdate one made only after restart.
+            decision_key = path + "/admission"
+            decision = self.journal.get_event(decision_key)
+            if decision is None:
+                elapsed = self.journal.observed_wall_ms(lane.path)
+                decision = {"engine_digest": engine_digest, "wall_ms": elapsed}
+                self.journal.event(decision_key, decision)
+            if decision["engine_digest"] != engine_digest:
+                raise ValueError("Replayed mainline decision differs from its signed candidate")
+            elapsed = decision["wall_ms"]
+            if elapsed > lane.budget.wall_ms:
+                engine_digest, outcome = checkpoint.engine_digest, "budget_stopped"
+                evidence = {**evidence, "late_decision_wall_ms": elapsed}
+            else:
+                admitted = elapsed
         experience = Experience(path, checkpoint.engine_digest, asdict(choice) if choice else None,
                                 prepared.get("observation"), outcome, evidence, attempt_cost.record())
         experience_digest = self.journal.put("experience", asdict(experience))
@@ -216,10 +269,13 @@ class Controller:
         after = replace(checkpoint, engine_digest=engine_digest, memory_digest=memory,
                         candidate_pool_digest=prepared.get("pool_digest"))
         result = {"checkpoint": asdict(after), "experience": experience_digest, "outcome": outcome}
+        if admitted is not None:
+            result["available_wall_ms"] = admitted
         self.journal.event(f"{path}/finished", result)
         return result
 
-    def step(self, lane, key, checkpoint, *, memory_enabled=True, block_id=None, paired=False, prepared=None):
+    def step(self, lane, key, checkpoint, *, memory_enabled=True, block_id=None, paired=False, prepared=None,
+             stamp_mainline=False):
         path = f"{lane.path}/{key}"
         saved = self.journal.get_event(f"{path}/finished")
         if saved is not None:
@@ -229,7 +285,7 @@ class Controller:
             prepared = self.prepare(lane, key, checkpoint, memory_enabled, paired=paired)
         choice = self._choose(lane, key, checkpoint, prepared)
         attempt = self._attempt(lane, key, checkpoint, prepared, choice, block_id or path)
-        return self._finish(lane, key, checkpoint, prepared, choice, *attempt)
+        return self._finish(lane, key, checkpoint, prepared, choice, *attempt, stamp=stamp_mainline)
 
     def _confirm(self, lane, key, name, parent, candidate):
         timing = self.backend.cap("measure")
@@ -415,7 +471,7 @@ class Controller:
         return {"rates": rates, "gates": checks, "identical_engine": False, "log_gain": gain}
 
     def run(self, lane, checkpoint, steps, *, memory_enabled=True,
-            windows=(), dev_starts=(), dev_budget=Cost(), dev_steps=1):
+            windows=(), dev_starts=(), dev_budget=Cost(), dev_steps=1, track_budget_points=False):
         if checkpoint.environment_digest != self.environment:
             raise ValueError("Checkpoint environment is incompatible")
         prefix = f"{lane.path}/run"
@@ -423,12 +479,15 @@ class Controller:
             "start": asdict(checkpoint), "lane": asdict(lane), "steps": steps,
             "memory_enabled": memory_enabled, "harness": HARNESS_REVISION,
             "windows": list(windows), "bank": [asdict(start) for start in dev_starts],
-            "dev_budget": dev_budget.record(), "dev_steps": dev_steps,
+            "dev_budget": dev_budget.record(), "dev_steps": dev_steps, "track_budget_points": track_budget_points,
         })
         sealed = self.journal.get_event(f"{prefix}/sealed")
         if sealed is not None:
             return sealed
         self.journal.begin_scope(lane.path)
+        points = [] if track_budget_points else None
+        admissions = [{"source_event": prefix + "/manifest", "available_wall_ms": 0,
+                       "engine_digest": checkpoint.engine_digest}]
         step_index, window_index, tick = 0, 0, 0
         while step_index < steps:
             tick_path = f"{prefix}/tick-{tick}"
@@ -439,7 +498,12 @@ class Controller:
                 due = (window_index < len(windows)
                        and self.journal.wall_elapsed(lane.path, spent) >= windows[window_index])
                 action = {"next": "update" if due else "step"}
+                if track_budget_points:
+                    action["at_wall_ms"] = self.journal.observed_wall_ms(lane.path, spent)
                 self.journal.event(tick_path, action)
+            if track_budget_points:
+                _record_budget_points(self.journal, prefix, lane.budget.wall_ms, admissions, points,
+                                      before=action["at_wall_ms"])
             if action["next"] == "update":
                 try:
                     update = self.update(lane, f"window-{window_index}", checkpoint,
@@ -452,14 +516,22 @@ class Controller:
                 window_index += 1
                 checkpoint = replace(checkpoint, policy_digest=update["current"])
                 continue
-            next_step = self.step(lane, f"step-{step_index}", checkpoint, memory_enabled=memory_enabled)
+            step_key = f"step-{step_index}"
+            next_step = self.step(lane, step_key, checkpoint, memory_enabled=memory_enabled,
+                                  stamp_mainline=track_budget_points)
             checkpoint = Checkpoint(**next_step["checkpoint"])
+            if track_budget_points and next_step["outcome"] == "mainline":
+                admissions.append({"source_event": f"{lane.path}/{step_key}/admission",
+                                   "available_wall_ms": next_step["available_wall_ms"],
+                                   "engine_digest": checkpoint.engine_digest})
             step_index += 1
             if next_step["outcome"] in STOP:
                 break
-        return self._seal_run(lane, checkpoint, step_index, window_index)
+        if track_budget_points:
+            _record_budget_points(self.journal, prefix, lane.budget.wall_ms, admissions, points)
+        return self._seal_run(lane, checkpoint, step_index, window_index, budget_points=points)
 
-    def _seal_run(self, lane, checkpoint, steps, windows, *, elapsed=None):
+    def _seal_run(self, lane, checkpoint, steps, windows, *, elapsed=None, budget_points=None):
         key = lane.path + "/run/sealed"
         saved = self.journal.get_event(key)
         if saved is not None:
@@ -467,9 +539,7 @@ class Controller:
         cost = self.journal.spent(lane.path)
         submission = {"checkpoint": asdict(checkpoint), "cost": cost.record(), "steps": steps, "windows": windows,
                       "elapsed_wall_ms": self.journal.wall_elapsed(lane.path, cost) if elapsed is None else elapsed}
+        if budget_points is not None:
+            submission["budget_points"] = budget_points
         self.journal.event(key, submission)
         return submission
-
-
-def enabled_candidate(row, engine_digest):
-    return row["parent"] == engine_digest and row["candidate"] is not None
