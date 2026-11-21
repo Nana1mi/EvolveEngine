@@ -3,13 +3,17 @@ import io
 import json
 import os
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
+from threading import Timer
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import zlib
 
 from evolveengine.deepseek import Provider, ProviderBudget
-from evolveengine.pi import PiAgent
+from evolveengine.pi import ModelStages, PiAgent
+from evolveengine.ranking import filter_pool
 from evolveengine.schema import Cost
 from evolveengine.spark_worker import logit_checks, truncated_vocab_control
 
@@ -84,6 +88,40 @@ class LiveAdapterTests(unittest.TestCase):
             status, _ = send({**payload, "messages": [{"role": "user", "content": "X" * 230}]})
             self.assertEqual(status, 400)
             self.assertEqual(len(upstream_requests), 1)
+
+    def test_candidate_prompt_example_matches_strict_pool_contract(self):
+        root = "python/minisgl/engine"
+        repository = Mock(editable=(root,))
+        repository.source.return_value = ""
+        pi = Mock()
+        pi.session.return_value = ({"candidates": []}, [])
+        result = ModelStages(pi, repository, (root + "/engine.py",))._structured(
+            "generate", {"engine": {}, "profile": {}, "memory": [], "excluded": [], "draw_index": 0}, None,
+        )
+        example = result["prompt"].split("required field types: ", 1)[1]
+        example, _ = json.JSONDecoder().raw_decode(example)
+        candidate, = example["candidates"]
+        self.assertEqual(filter_pool([candidate], (root,), ())[1]["eligible"], 1)
+        for invalid in ({**candidate, "target_scope": candidate["target_scope"][0]},
+                        {**candidate, "infeasible_conditions": [candidate["infeasible_conditions"]]}):
+            with self.assertRaises(ValueError):
+                filter_pool([invalid], (root,), ())
+
+    def test_provider_refusal_interrupts_waiting_pi_process(self):
+        pi = PiAgent([sys.executable, "-c", "import time; time.sleep(30)"], "1.5.2", self.provider)
+        cap = Cost(wall_ms=20000, input_tokens=16000)
+        with TemporaryDirectory() as root, ProviderBudget(self.provider, cap) as broker:
+            message = "Provider input and output do not fit the remaining token reservation"
+            fail = Timer(0.15, setattr, args=(broker, "failure", message))
+            start = time.monotonic()
+            fail.start()
+            try:
+                with self.assertRaisesRegex(ValueError, message):
+                    pi.session(Path(root), "Wait for a provider rejection.", broker)
+            finally:
+                fail.cancel()
+                fail.join()
+            self.assertLess(time.monotonic() - start, 5)
 
     @unittest.skipUnless("EVOLVE_PI_TEST_COMMAND" in os.environ, "optional pinned Pi CLI")
     def test_actual_pi_guard_and_token_meter(self):
