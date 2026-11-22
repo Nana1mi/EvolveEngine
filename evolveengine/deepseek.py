@@ -102,6 +102,9 @@ class ProviderBudget:
     def local_url(self):
         return f"http://127.0.0.1:{self.server.server_port}"
 
+    def turn_output_ceiling(self, input_bound):
+        return min(self.config.max_turn_output, self.limit.tokens - self.spent.tokens - input_bound)
+
     def handle(self, handler):
         if (handler.path != "/chat/completions" or
                 not secrets.compare_digest(handler.headers.get("Authorization", ""), "Bearer " + self.token)):
@@ -123,7 +126,7 @@ class ProviderBudget:
                 raise ValueError("Unexpected model or response mode")
             # Serialized byte length plus fixed framing is a conservative text-only bound.
             input_bound = len(canonical([payload["messages"], payload.get("tools", [])]).encode("utf-8")) + 128
-            ceiling = min(self.config.max_turn_output, self.limit.tokens - self.spent.tokens - input_bound)
+            ceiling = self.turn_output_ceiling(input_bound)
             if ceiling <= 0:
                 raise ValueError("Provider input and output do not fit the remaining token reservation")
             payload.pop("max_completion_tokens", None)

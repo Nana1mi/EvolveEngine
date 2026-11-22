@@ -1,0 +1,2 @@
+# Card bytes are evidence; retain their registered line endings.
+*.md -text diff whitespace=cr-at-eol
