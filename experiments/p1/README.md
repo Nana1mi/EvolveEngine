@@ -7,3 +7,13 @@
 `release.py` 只检查文件承诺、两正两负、独立重放的逐题判据和外部确认的清单摘要，不能从字符串验证人的身份。必须由未参与建题者用新检出实际复核，并在裁判端线下确认身份和 SHA-256；不得把作者、自己的另一个进程或测试 fixture 当独立复核人。`dispatch.py` 每次只接收一个已放行时隙，先写不可重复的预留记录，再启动 Pi；不会自动重试，也不包含 GPU 盲裁或批量循环。未签齐时只跑单元测试，不运行调度器。
 
 从仓库根目录运行 `python -m unittest discover -s tests -p 'test_p1*.py' -v`。设置已有 `EVOLVE_PI_TEST_COMMAND` 时还会用真实 Pi 和本机模拟 provider 检查“空补丁 → 定向反馈 → 一次修正”，不会访问真实模型。全项目回归用 `python -m unittest discover -s tests -v`。
+
+## 收到独立复核材料后：先验收，不启动试次
+
+需要复核人返回**完整独立重放输出目录**（包括 `run.json`、两个 `*-raw` 目录、逐卡回执、签收清单），并通过另一个可信渠道确认最终清单的 SHA-256。只有姓名、作者报告、输入压缩包的 SHA-256 或一份 `pending-manifest.json` 都不够。控制器用自己的冻结 `expected.json` 做比对，不用复核人传来的副本。离线命令：
+
+```text
+python -m experiments.p1.intake --expected <冻结的expected.json> --manifest <最终签收清单> --trusted-sha256 <另行确认的清单摘要> --evidence <独立输出目录>
+```
+
+该命令不会启动模型或 GPU、不会写签收或预留记录。非零退出表示材料不能用于放行。成功只说明这份材料通过离线检查，不代表已经开跑或能验证真人身份。返回的 `review_run_seconds` 是本次复核的保守节点秒数，只入账一次；开跑前还须扣除其他已花费或已预留的复核/盲裁预算，不能把同一笔费用按四张卡重复相加。
