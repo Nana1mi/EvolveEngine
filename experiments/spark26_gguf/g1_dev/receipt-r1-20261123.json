@@ -1,0 +1,258 @@
+{
+  "arms": {
+    "e0a": {
+      "checks": {
+        "after0": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "after1": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "before0": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "before1": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "numeric130": {
+          "e0_top1": 6529,
+          "kl_e0_to_role": 0.0,
+          "mass": 0.999999789297193,
+          "max_abs_logp": 0.0,
+          "sha256": "3dbc0c5a0c247f4c811ec49bf1e57d098ec1c93eb0465f1789fa145138ec6f1f",
+          "status": "pass_scoped",
+          "top1": 6529,
+          "top1_margin": 10.51562536538404
+        },
+        "numeric260": {
+          "e0_top1": 6511,
+          "kl_e0_to_role": 0.0,
+          "mass": 1.0000005048137959,
+          "max_abs_logp": 0.0,
+          "sha256": "2b9931611d23871a0a5af1eb2c6a313c6647dc8bc7356e85e6b1ffb26962bc0d",
+          "status": "pass_scoped",
+          "top1": 6511,
+          "top1_margin": 3.257812611758709
+        },
+        "post_cancel_stability0": {
+          "final_tokens": 7,
+          "status": "pass_scoped",
+          "trigger_tokens": 4
+        },
+        "post_cancel_stability1": {
+          "final_tokens": 7,
+          "status": "pass_scoped",
+          "trigger_tokens": 4
+        }
+      },
+      "status": "pass_scoped"
+    },
+    "e0b": {
+      "checks": {
+        "after0": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "after1": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "before0": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "before1": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "numeric130": {
+          "e0_top1": 6529,
+          "kl_e0_to_role": 0.0,
+          "mass": 0.999999789297193,
+          "max_abs_logp": 0.0,
+          "sha256": "3dbc0c5a0c247f4c811ec49bf1e57d098ec1c93eb0465f1789fa145138ec6f1f",
+          "status": "pass_scoped",
+          "top1": 6529,
+          "top1_margin": 10.51562536538404
+        },
+        "numeric260": {
+          "e0_top1": 6511,
+          "kl_e0_to_role": 0.0,
+          "mass": 1.0000005048137959,
+          "max_abs_logp": 0.0,
+          "sha256": "2b9931611d23871a0a5af1eb2c6a313c6647dc8bc7356e85e6b1ffb26962bc0d",
+          "status": "pass_scoped",
+          "top1": 6511,
+          "top1_margin": 3.257812611758709
+        },
+        "post_cancel_stability0": {
+          "final_tokens": 7,
+          "status": "pass_scoped",
+          "trigger_tokens": 4
+        },
+        "post_cancel_stability1": {
+          "final_tokens": 7,
+          "status": "pass_scoped",
+          "trigger_tokens": 4
+        }
+      },
+      "status": "pass_scoped"
+    },
+    "fault": {
+      "checks": {
+        "after0": {
+          "finish": "length",
+          "matched": null,
+          "status": "verified_difference",
+          "tokens": 48
+        },
+        "after1": {
+          "finish": "length",
+          "matched": null,
+          "status": "verified_difference",
+          "tokens": 48
+        },
+        "before0": {
+          "finish": "length",
+          "matched": null,
+          "status": "verified_difference",
+          "tokens": 48
+        },
+        "before1": {
+          "finish": "length",
+          "matched": null,
+          "status": "verified_difference",
+          "tokens": 48
+        },
+        "numeric130": {
+          "e0_top1": 6529,
+          "kl_e0_to_role": 10.639676899885322,
+          "mass": 1.000000538727026,
+          "max_abs_logp": 33.062089920043945,
+          "sha256": "6285b8c1e121f0f8fa58aa0be0cfab8dc4fe8cdcae0377baaea7a7687ab3e4c5",
+          "status": "verified_difference",
+          "top1": 83382,
+          "top1_margin": 0.5
+        },
+        "numeric260": {
+          "e0_top1": 6511,
+          "kl_e0_to_role": 10.53768682529251,
+          "mass": 1.0000000517704473,
+          "max_abs_logp": 22.259979248046875,
+          "sha256": "81be44e6446b72fce6e4dd22ba93aa982e81532e501dbe91f33be35882c8d258",
+          "status": "verified_difference",
+          "top1": 83382,
+          "top1_margin": 0.875
+        },
+        "post_cancel_stability0": {
+          "final_tokens": 7,
+          "status": "pass_scoped",
+          "trigger_tokens": 4
+        },
+        "post_cancel_stability1": {
+          "final_tokens": 7,
+          "status": "pass_scoped",
+          "trigger_tokens": 4
+        }
+      },
+      "status": "verified_difference"
+    },
+    "qkv": {
+      "checks": {
+        "after0": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "after1": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "before0": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "before1": {
+          "finish": "stop",
+          "matched": 1,
+          "status": "pass_scoped",
+          "tokens": 3
+        },
+        "numeric130": {
+          "e0_top1": 6529,
+          "kl_e0_to_role": 0.0,
+          "mass": 0.999999789297193,
+          "max_abs_logp": 0.0,
+          "sha256": "3dbc0c5a0c247f4c811ec49bf1e57d098ec1c93eb0465f1789fa145138ec6f1f",
+          "status": "pass_scoped",
+          "top1": 6529,
+          "top1_margin": 10.51562536538404
+        },
+        "numeric260": {
+          "e0_top1": 6511,
+          "kl_e0_to_role": 0.0,
+          "mass": 1.0000005048137959,
+          "max_abs_logp": 0.0,
+          "sha256": "2b9931611d23871a0a5af1eb2c6a313c6647dc8bc7356e85e6b1ffb26962bc0d",
+          "status": "pass_scoped",
+          "top1": 6511,
+          "top1_margin": 3.257812611758709
+        },
+        "post_cancel_stability0": {
+          "final_tokens": 7,
+          "status": "pass_scoped",
+          "trigger_tokens": 4
+        },
+        "post_cancel_stability1": {
+          "final_tokens": 7,
+          "status": "pass_scoped",
+          "trigger_tokens": 4
+        }
+      },
+      "status": "pass_scoped"
+    }
+  },
+  "control_pattern_observed": true,
+  "evidence_complete": true,
+  "formal_g1_signed": false,
+  "receipt_issues": {},
+  "run": {
+    "boot_elapsed_s": {
+      "e0a": 65,
+      "e0b": 65,
+      "fault": 66,
+      "qkv": 65
+    },
+    "bundle_sha256": "5c0c6ee5797148fd5830cd69a7ac3b0367a626d707bb925699be8db568d26cf9",
+    "node_elapsed_s": 262,
+    "raw_file_count": 12,
+    "raw_manifest_sha256": "6b13527eaf7796ca42e4d9c66554be2ca09740cd23c7a152d1c87e3e9decd127",
+    "runtime_equal_fields": 46
+  },
+  "scope": "P1 r1 exact-reference synthetic controls only"
+}

@@ -1,0 +1,179 @@
+{
+  "status": "pass_launcher_mock_scope",
+  "scope": "pilot launcher mode with mock upstream; not a free pilot",
+  "gpu_calls": 0,
+  "paid_calls": 0,
+  "session": {
+    "run": "a6d75e4260754e9e",
+    "image": "sha256:efe1685cb8525c933297166615061df41d6735bc927cd6650c31354bb0afc41e",
+    "pi": "1.5.2",
+    "node": "24.13.0",
+    "snapshot": "d652ca3559a8ba1b0670830d084f4c32ccf77def4ea006f5cd980cca87328d34",
+    "isolation": {
+      "network": "none",
+      "read_only_root": true,
+      "user": "12345:12345",
+      "mount_writeable": {
+        "/gate": false,
+        "/input": false,
+        "/opt/ee/v3_guest.mjs": false,
+        "/opt/ee/v3_rpc.mjs": false
+      },
+      "gpu": false
+    },
+    "relay_events": 3,
+    "transport_fault": null,
+    "isolated_state_removed": true,
+    "socket_removed": true,
+    "unchanged_install": true,
+    "wall_ms": 2630,
+    "provider_rows": [
+      {
+        "turn": 1,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "d18355409afa75ba39384be230ab0bd2236ff96664c3135864171ab63f8522a5",
+        "prior_tool_contexts": 0,
+        "toolset_sha": "6ff36237ccbf3c456009b71c585601980f49017b3109efdf6e8c6b846fae063e",
+        "prompt_fragments": [],
+        "input_reserved": 6617,
+        "output_reserved": 1000,
+        "request_meta": {
+          "request_bytes": 6532,
+          "input_left": 20000,
+          "output_left": 2000,
+          "input_bound": 6617,
+          "output_bound": 1000,
+          "requested_max_tokens": 8192,
+          "upstream_request_bytes": 6532,
+          "profile": "pinned_max",
+          "replay": {
+            "expected": 0,
+            "observed": 0,
+            "missing": 0,
+            "extra": 0,
+            "reasoning_mismatches": 0
+          },
+          "tool_result_count": 0,
+          "recent_tool_results": []
+        },
+        "input_tokens": 60,
+        "output_including_reasoning": 12,
+        "reasoning_tokens": 5,
+        "finish": "tool_calls",
+        "usage": "settled",
+        "versions": [],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 0
+      },
+      {
+        "turn": 2,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "15529371b3b887aefb330c826c7b7bd9522eb8f5b5a4a1e88a239e32b46f3438",
+        "prior_tool_contexts": 1,
+        "toolset_sha": "6ff36237ccbf3c456009b71c585601980f49017b3109efdf6e8c6b846fae063e",
+        "prompt_fragments": [],
+        "input_reserved": 7138,
+        "output_reserved": 1000,
+        "request_meta": {
+          "request_bytes": 7053,
+          "input_left": 19940,
+          "output_left": 1988,
+          "input_bound": 7138,
+          "output_bound": 1000,
+          "requested_max_tokens": 8192,
+          "upstream_request_bytes": 7053,
+          "profile": "pinned_max",
+          "replay": {
+            "expected": 1,
+            "observed": 1,
+            "missing": 0,
+            "extra": 0,
+            "reasoning_mismatches": 0
+          },
+          "tool_result_count": 1,
+          "recent_tool_results": [
+            {
+              "kind": "ee_rpc",
+              "text_utf8_bytes": 191
+            }
+          ]
+        },
+        "input_tokens": 60,
+        "output_including_reasoning": 12,
+        "reasoning_tokens": 5,
+        "finish": "stop",
+        "usage": "settled",
+        "versions": [],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 0
+      }
+    ],
+    "gateway_events": [],
+    "timed_out": false,
+    "pi_tool_executions": [
+      {
+        "name": "ee_rpc",
+        "error": false
+      }
+    ],
+    "pi_errors": 0,
+    "pi_exit": 0,
+    "status": "pi_session_complete"
+  },
+  "trusted_rows": [
+    {
+      "event_id": 1,
+      "operation": "harness_status",
+      "status": "ok",
+      "active": "d652ca3559a8ba1b0670830d084f4c32ccf77def4ea006f5cd980cca87328d34"
+    }
+  ],
+  "runtime": {
+    "pi_version": "1.5.2",
+    "pi_image": "efe1685cb8525c933297166615061df41d6735bc927cd6650c31354bb0afc41e",
+    "node_version": "24.13.0",
+    "package_lock_sha": "28f1bd388de4038dcdc606f03126d7cf2151245e4660dc36deb68dd28ff6c7b5",
+    "runner_sha": "c386d40a87a84ccbc9c3a05ea38067e36cd73b30b97cc2b97a7b488812848044",
+    "base_config_sha": "7de9bc952ae6f94511368cf767597eda6e85d7bade62c9fb345606eb927d3635"
+  },
+  "execution_protocol": {
+    "version": "p3-max-output-8192-v1",
+    "profile_sha": "9a1185c9bc933ed682a1a04f58d352e71b560f73c3606d7160b970eb105b79c3",
+    "limits": {
+      "input": 200000,
+      "output": 24000,
+      "turns": 28,
+      "wall_ms": 1200000,
+      "per_turn_output": 8192,
+      "request_bytes": 524288
+    },
+    "model": "deepseek-flash",
+    "thinking": "enabled",
+    "reasoning_effort": "max",
+    "modes": {
+      "B0": "fixed_train",
+      "B2": "evolving_train"
+    },
+    "node_ms": 800000,
+    "dev_calls": 4,
+    "job_reservation_ms": 200000,
+    "truncation": "generation_truncated",
+    "launcher_sha": "87485aaa762c018c37644381bcdc0d4b2e92f12bbe10092450df2ceb0c010c0e"
+  },
+  "provider_diagnostics": {
+    "version": "max-lease-metadata-v3",
+    "provider_source_sha": "c1ccd79684bd88cc656f64d16e30fe363f078b6e9a35bd3187453eaf39e3cf2e"
+  }
+}

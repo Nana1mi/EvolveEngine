@@ -1,0 +1,2 @@
+# Freeze manifest hashes raw UTF-8 bytes, not Git-normalized text.
+* -text

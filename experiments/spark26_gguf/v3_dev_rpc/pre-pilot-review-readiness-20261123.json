@@ -1,0 +1,27 @@
+{
+  "status": "ready_to_launch_not_executed",
+  "source_sha": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+  "evidence": {
+    "experiments/spark26_gguf/g1_v/receipt-v01-20261123.json": "6eb362e0cb7b7c3bebbe9e5219a20c943565d941470f062695be958f066743ed",
+    "experiments/p2_os_boundary/receipt-03.json": "e325656410c838fb7038ebaf1c94bf9eb4725afa2754a6a0ff7b9e07bb41feed",
+    "experiments/p2_os_boundary/shared-freeze-02.json": "0c1669da6871089e27b7d97be4ba212c1a34891cc4139c6f1363d31d924a908e",
+    "experiments/spark26_gguf/v3_dev_rpc/launcher-mock-04.json": "23c763130ef9919a795960743ae1c4140a319f5a157814f430ebcc6433dedd08",
+    "experiments/spark26_gguf/v3_dev_rpc/launcher-pair-04.json": "2e72dc9c86840c450e9d4273929827108e0dc9f5e60f0d61ee66b4e69ef57a38",
+    "experiments/spark26_gguf/v3_dev_rpc/g1a-03.json": "46544df7bf7e96d7e8ebf544a0ad5271068387784f4c4162cfb53a6f375cc85e",
+    "experiments/spark26_gguf/four_scene_e0/result-20261123.json": "4e1182b5968cbd5369d530dc0289485afa1b7d13a148c918f8f4d033253a4abc",
+    "experiments/p2_os_boundary/live-max-01.json": "fd475b870e20fbf0a7e320f4994f9335b346f4e83076640c28a4903dcc1e9e21"
+  },
+  "provider_fingerprint": "bc19ba97cbe016479903222bb1578db6",
+  "worker_bundle_sha": "35c72b53fe0c988d9016dd2c7df663dfdd2866526e7eaf705ab526e69cfadb7a",
+  "scope": "two isolated development-only sessions, one persistent GGUF Python source, no CUDA profile RPC or formal W",
+  "budget": {
+    "per_session_wall_s": 1200,
+    "per_session_gpu_node_ms": 800000,
+    "per_session_dev_calls": 4,
+    "controller_e0_boots": 1,
+    "e0_charge_included": true,
+    "input_tokens": 200000,
+    "output_tokens_including_reasoning": 24000,
+    "turns": 28
+  }
+}

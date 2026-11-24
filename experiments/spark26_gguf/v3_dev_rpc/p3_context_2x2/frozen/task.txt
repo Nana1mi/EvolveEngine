@@ -1,0 +1,1 @@
+Fix clamp_percent in toy.py for integer inputs so its result is bounded to [0, 100], inclusive. Leave the function signature and all other source unchanged. Submit just the new one-line return expression (without the return keyword), using only value, integer literals, and two-argument min/max. The target is at the beginning of the read result; do not request a continuation.

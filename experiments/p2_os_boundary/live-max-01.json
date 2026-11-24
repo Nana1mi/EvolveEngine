@@ -1,0 +1,216 @@
+{
+  "status": "pass_scoped",
+  "gpu_calls": 0,
+  "scope": "one bounded synthetic shared runner session, not a free optimization pilot",
+  "verified_model_listing": {
+    "id": "deepseek-flash",
+    "name": "DeepSeek-V4.1-Flash",
+    "owner": "deepseek",
+    "required_response_fingerprint": null
+  },
+  "session": {
+    "run": "8e30bacfb74e83d3",
+    "image": "sha256:efe1685cb8525c933297166615061df41d6735bc927cd6650c31354bb0afc41e",
+    "pi": "1.5.2",
+    "node": "24.13.0",
+    "snapshot": "c5c7b148c06c54ea09d66a304a5a29ffdbd07bf53274de202e1c8bbfe5386f4f",
+    "isolation": {
+      "network": "none",
+      "read_only_root": true,
+      "user": "12345:12345",
+      "mount_writeable": {
+        "/gate": false,
+        "/input": false,
+        "/opt/ee/v3_guest.mjs": false,
+        "/opt/ee/v3_rpc.mjs": false
+      },
+      "gpu": false
+    },
+    "relay_events": 4,
+    "transport_fault": null,
+    "isolated_state_removed": true,
+    "socket_removed": true,
+    "unchanged_install": true,
+    "wall_ms": 4549,
+    "provider_rows": [
+      {
+        "turn": 1,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "920e2b6de77368ca3565f035875816ef5a650cfaba59c8bae46d67052fe8dac5",
+        "prior_tool_contexts": 0,
+        "toolset_sha": "2041f0fa6b2e4682404f18101c53549b84ab697eb812197d205aa805f5394d78",
+        "prompt_fragments": [],
+        "input_reserved": 1930,
+        "output_reserved": 1000,
+        "input_tokens": 628,
+        "output_including_reasoning": 70,
+        "reasoning_tokens": 0,
+        "finish": "tool_calls",
+        "usage": "settled",
+        "versions": [
+          "bc19ba97cbe016479903222bb1578db6"
+        ],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 715
+      },
+      {
+        "turn": 2,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "ddca358749746eebdbbd01f80876cc0f79d62eb216e8adeed5fbb2e8aabf9dd9",
+        "prior_tool_contexts": 1,
+        "toolset_sha": "2041f0fa6b2e4682404f18101c53549b84ab697eb812197d205aa805f5394d78",
+        "prompt_fragments": [],
+        "input_reserved": 2269,
+        "output_reserved": 1000,
+        "input_tokens": 717,
+        "output_including_reasoning": 64,
+        "reasoning_tokens": 10,
+        "finish": "tool_calls",
+        "usage": "settled",
+        "versions": [
+          "bc19ba97cbe016479903222bb1578db6"
+        ],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 920
+      },
+      {
+        "turn": 3,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "84902ed775e2a7c2a243b3d9b06c59ae31ba81fe1cad8f3ae5735b462df58e82",
+        "prior_tool_contexts": 2,
+        "toolset_sha": "2041f0fa6b2e4682404f18101c53549b84ab697eb812197d205aa805f5394d78",
+        "prompt_fragments": [],
+        "input_reserved": 2691,
+        "output_reserved": 1000,
+        "input_tokens": 815,
+        "output_including_reasoning": 5,
+        "reasoning_tokens": 0,
+        "finish": "stop",
+        "usage": "settled",
+        "versions": [
+          "bc19ba97cbe016479903222bb1578db6"
+        ],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 534
+      }
+    ],
+    "gateway_events": [],
+    "timed_out": false,
+    "pi_tool_executions": [
+      {
+        "name": "read",
+        "error": false
+      },
+      {
+        "name": "ee_rpc",
+        "error": false
+      }
+    ],
+    "pi_errors": 0,
+    "pi_exit": 0,
+    "status": "pi_session_complete"
+  },
+  "provider_rows": [
+    {
+      "turn": 1,
+      "model": "deepseek-flash",
+      "thinking": "enabled",
+      "effort": "max",
+      "upstream_sha": "920e2b6de77368ca3565f035875816ef5a650cfaba59c8bae46d67052fe8dac5",
+      "prior_tool_contexts": 0,
+      "toolset_sha": "2041f0fa6b2e4682404f18101c53549b84ab697eb812197d205aa805f5394d78",
+      "prompt_fragments": [],
+      "input_reserved": 1930,
+      "output_reserved": 1000,
+      "input_tokens": 628,
+      "output_including_reasoning": 70,
+      "reasoning_tokens": 0,
+      "finish": "tool_calls",
+      "usage": "settled",
+      "versions": [
+        "bc19ba97cbe016479903222bb1578db6"
+      ],
+      "response_models": [
+        "deepseek-flash"
+      ],
+      "reasoning_stream_seen": true,
+      "result": "complete",
+      "wall_ms": 715
+    },
+    {
+      "turn": 2,
+      "model": "deepseek-flash",
+      "thinking": "enabled",
+      "effort": "max",
+      "upstream_sha": "ddca358749746eebdbbd01f80876cc0f79d62eb216e8adeed5fbb2e8aabf9dd9",
+      "prior_tool_contexts": 1,
+      "toolset_sha": "2041f0fa6b2e4682404f18101c53549b84ab697eb812197d205aa805f5394d78",
+      "prompt_fragments": [],
+      "input_reserved": 2269,
+      "output_reserved": 1000,
+      "input_tokens": 717,
+      "output_including_reasoning": 64,
+      "reasoning_tokens": 10,
+      "finish": "tool_calls",
+      "usage": "settled",
+      "versions": [
+        "bc19ba97cbe016479903222bb1578db6"
+      ],
+      "response_models": [
+        "deepseek-flash"
+      ],
+      "reasoning_stream_seen": true,
+      "result": "complete",
+      "wall_ms": 920
+    },
+    {
+      "turn": 3,
+      "model": "deepseek-flash",
+      "thinking": "enabled",
+      "effort": "max",
+      "upstream_sha": "84902ed775e2a7c2a243b3d9b06c59ae31ba81fe1cad8f3ae5735b462df58e82",
+      "prior_tool_contexts": 2,
+      "toolset_sha": "2041f0fa6b2e4682404f18101c53549b84ab697eb812197d205aa805f5394d78",
+      "prompt_fragments": [],
+      "input_reserved": 2691,
+      "output_reserved": 1000,
+      "input_tokens": 815,
+      "output_including_reasoning": 5,
+      "reasoning_tokens": 0,
+      "finish": "stop",
+      "usage": "settled",
+      "versions": [
+        "bc19ba97cbe016479903222bb1578db6"
+      ],
+      "response_models": [
+        "deepseek-flash"
+      ],
+      "reasoning_stream_seen": true,
+      "result": "complete",
+      "wall_ms": 534
+    }
+  ],
+  "spent_input": 2160,
+  "spent_output": 139,
+  "trusted_rpc": [
+    "facts"
+  ]
+}

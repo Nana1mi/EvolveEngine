@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "purpose": "synthetic_same_image_e0_noise_not_business_baseline",
+  "image_id": "sha256:28e47ed30260eaaab0fee0251b53018766afc2dc61e1c8e4c65be4b1e6d088ff",
+  "gguf_sha256": "d1df86f9332b75424ab3f7e14fdc2cf20aec93fa1e4a86393bb4e75057f24180",
+  "api": "native_generate_pretokenized_streaming",
+  "input_recipe": "token_i=6510+37*lane+(i%37); lane starts at 0",
+  "warmup_waves": 2,
+  "timed_waves": 5,
+  "shapes": {
+    "short1": {"input_tokens": 130, "width": 1, "output_tokens": 48},
+    "short2": {"input_tokens": 130, "width": 2, "output_tokens": 48},
+    "long1": {"input_tokens": 768, "width": 1, "output_tokens": 48},
+    "long2": {"input_tokens": 768, "width": 2, "output_tokens": 48}
+  },
+  "pairs": [
+    {"labels": ["a1", "b1"], "shape_order": ["short1", "long2", "short2", "long1"]},
+    {"labels": ["b2", "a2"], "shape_order": ["long1", "short2", "long2", "short1"]},
+    {"labels": ["a3", "b3"], "shape_order": ["short2", "long1", "short1", "long2"]}
+  ]
+}

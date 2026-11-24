@@ -1,0 +1,8 @@
+{
+  "status": "insufficient_evidence",
+  "raw": "spark26-v3-rpc.gvyr5e",
+  "bundle": "f5acf06c7afacfa77c7f2a074e1192dac49a80149c087ed399cd3ce48ae1633b",
+  "operation": "develop_quality",
+  "error": "asset source root-only; nonroot candidate did not become healthy; no responses; do not modify source asset permissions",
+  "node_milliseconds": 181940
+}

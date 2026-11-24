@@ -1,0 +1,121 @@
+{
+  "status": "not_passed",
+  "reason": "Command '['node', 'C:\\\\Users\\\\rog\\\\OneDrive\\\\文档\\\\Obsidian Vault\\\\推理引擎自进化\\\\EvolveEngine\\\\.evolveengine\\\\pi-smoke\\\\node_modules\\\\@earendil-works\\\\pi-coding-agent\\\\dist\\\\cli.js', '--mode', 'json', '--provider', 'wire', '--model', 'deepseek-flash', '--thinking', 'max', '--no-session', '--no-extensions', '--no-mcp', '--no-context-files', '--no-skills', '--no-prompt-templates', '--tools', 'read,write,count_*', '--system-prompt', 'Use the toy tools only.', '-e', 'C:\\\\Users\\\\rog\\\\AppData\\\\Local\\\\Temp\\\\ee-tool-restore-ibbqmp7s\\\\session-dr84e1as\\\\C1\\\\frozen.mjs', '--print', 'Check the synthetic fixture.']' timed out after 55 seconds",
+  "partial_evidence": {
+    "s1-B2": {
+      "wire": [
+        {
+          "turn": 1,
+          "tools": [
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true
+        },
+        {
+          "turn": 2,
+          "tools": [
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "previous_tool": "write"
+        }
+      ],
+      "witness": [],
+      "boundary_errors": [],
+      "exit_code": 0,
+      "event_types": [
+        "session",
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end",
+        "message_start",
+        "message_end",
+        "message_start",
+        "message_end",
+        "tool_execution_start",
+        "tool_execution_end",
+        "message_start",
+        "message_end",
+        "turn_end",
+        "turn_start",
+        "message_start",
+        "message_end",
+        "turn_end",
+        "agent_end",
+        "agent_settled"
+      ],
+      "assistant_stop_reasons": [
+        "toolUse",
+        "stop"
+      ]
+    },
+    "s1-B0": {
+      "wire": [
+        {
+          "turn": 1,
+          "tools": [
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true
+        },
+        {
+          "turn": 2,
+          "tools": [
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "previous_tool": "write"
+        }
+      ],
+      "witness": [],
+      "boundary_errors": [],
+      "exit_code": 0,
+      "event_types": [
+        "session",
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end",
+        "message_start",
+        "message_end",
+        "message_start",
+        "message_end",
+        "tool_execution_start",
+        "tool_execution_end",
+        "message_start",
+        "message_end",
+        "turn_end",
+        "turn_start",
+        "message_start",
+        "message_end",
+        "turn_end",
+        "agent_end",
+        "agent_settled"
+      ],
+      "assistant_stop_reasons": [
+        "toolUse",
+        "stop"
+      ]
+    },
+    "C1": {
+      "wire": [],
+      "witness": [
+        {
+          "event": "loaded",
+          "fixture": "count-hits-bad-v1",
+          "challenge_sha256": "23d40275fa4902e618607356511abefad04d5d1a1c72210c61d6d64734d5a639"
+        }
+      ],
+      "boundary_errors": []
+    }
+  }
+}

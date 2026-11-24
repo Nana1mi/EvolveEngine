@@ -1,0 +1,305 @@
+{
+  "status": "pass_scoped",
+  "pi_offline": true,
+  "persistent_http": true,
+  "scope": "fixed scripted fixture, not autonomous authorship or security attestation",
+  "pi": "1.5.2",
+  "fixture_sha256": "01d2d1b2f99a68eeb08d792c577d06448826920b8c794ba3f14e60e9474623c9",
+  "paid_calls": 0,
+  "gpu_calls": 0,
+  "sessions": [
+    {
+      "session": "s1-B2",
+      "private_home": true,
+      "pi_exit": 0,
+      "wire": [
+        {
+          "turn": 1,
+          "connection_ordinal": 1,
+          "tools": [
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true
+        },
+        {
+          "turn": 2,
+          "connection_ordinal": 1,
+          "tools": [
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "previous_tool": "write"
+        }
+      ],
+      "tool_ends": [
+        [
+          "write",
+          false
+        ]
+      ],
+      "witness": [],
+      "shared_fact_sha256": "c8d76e0b6208dce27e9891abb8160313ee2d7f7daf18d07e9f7617ff349534fd",
+      "snapshot_sha256": null
+    },
+    {
+      "session": "s1-B0",
+      "private_home": true,
+      "pi_exit": 0,
+      "wire": [
+        {
+          "turn": 1,
+          "connection_ordinal": 1,
+          "tools": [
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true
+        },
+        {
+          "turn": 2,
+          "connection_ordinal": 1,
+          "tools": [
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "previous_tool": "write"
+        }
+      ],
+      "tool_ends": [
+        [
+          "write",
+          false
+        ]
+      ],
+      "witness": [],
+      "shared_fact_sha256": "c8d76e0b6208dce27e9891abb8160313ee2d7f7daf18d07e9f7617ff349534fd",
+      "snapshot_sha256": null
+    },
+    {
+      "session": "C1",
+      "private_home": true,
+      "pi_exit": 0,
+      "wire": [
+        {
+          "turn": 1,
+          "connection_ordinal": 1,
+          "tools": [
+            "count_hits",
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true
+        },
+        {
+          "turn": 2,
+          "connection_ordinal": 2,
+          "tools": [
+            "count_hits",
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "previous_tool": "read"
+        },
+        {
+          "turn": 3,
+          "connection_ordinal": 2,
+          "tools": [
+            "count_hits",
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "challenge_matched": true,
+          "previous_tool": "count_hits"
+        },
+        {
+          "turn": 4,
+          "connection_ordinal": 2,
+          "tools": [
+            "count_hits",
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "challenge_matched": true,
+          "previous_tool": "count_hits"
+        }
+      ],
+      "tool_ends": [
+        [
+          "read",
+          false
+        ],
+        [
+          "count_hits",
+          false
+        ],
+        [
+          "count_hits",
+          true
+        ]
+      ],
+      "witness": [
+        {
+          "event": "loaded",
+          "fixture": "count-hits-bad-v1",
+          "challenge_sha256": "c79132f11b0156f5cae6fee2fe424358b24022252d205c3a887b971c40fcddc6"
+        },
+        {
+          "event": "invoked",
+          "id": "call_toy_2",
+          "n": 2,
+          "challenge_sha256": "047ca890a0d1dbcbdc5fecc48652d8526abb0f867dfcbfabf541a979fa2d51b5"
+        },
+        {
+          "event": "invoked",
+          "id": "call_toy_3",
+          "n": 0,
+          "challenge_sha256": "4248a32e92246b942036ed0be130a3d4993feb4178d84d166a0df78be7e2b87a"
+        }
+      ],
+      "shared_fact_sha256": "c8d76e0b6208dce27e9891abb8160313ee2d7f7daf18d07e9f7617ff349534fd",
+      "snapshot_sha256": "01d2d1b2f99a68eeb08d792c577d06448826920b8c794ba3f14e60e9474623c9"
+    },
+    {
+      "session": "B",
+      "private_home": true,
+      "pi_exit": 0,
+      "wire": [
+        {
+          "turn": 1,
+          "connection_ordinal": 1,
+          "tools": [
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true
+        },
+        {
+          "turn": 2,
+          "connection_ordinal": 1,
+          "tools": [
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "previous_tool": "read"
+        }
+      ],
+      "tool_ends": [
+        [
+          "read",
+          false
+        ]
+      ],
+      "witness": [],
+      "shared_fact_sha256": "c8d76e0b6208dce27e9891abb8160313ee2d7f7daf18d07e9f7617ff349534fd",
+      "snapshot_sha256": null
+    },
+    {
+      "session": "C2",
+      "private_home": true,
+      "pi_exit": 0,
+      "wire": [
+        {
+          "turn": 1,
+          "connection_ordinal": 1,
+          "tools": [
+            "count_hits",
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true
+        },
+        {
+          "turn": 2,
+          "connection_ordinal": 2,
+          "tools": [
+            "count_hits",
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "previous_tool": "read"
+        },
+        {
+          "turn": 3,
+          "connection_ordinal": 2,
+          "tools": [
+            "count_hits",
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "challenge_matched": true,
+          "previous_tool": "count_hits"
+        },
+        {
+          "turn": 4,
+          "connection_ordinal": 2,
+          "tools": [
+            "count_hits",
+            "read",
+            "write"
+          ],
+          "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+          "max_verified": true,
+          "challenge_matched": true,
+          "previous_tool": "count_hits"
+        }
+      ],
+      "tool_ends": [
+        [
+          "read",
+          false
+        ],
+        [
+          "count_hits",
+          false
+        ],
+        [
+          "count_hits",
+          true
+        ]
+      ],
+      "witness": [
+        {
+          "event": "loaded",
+          "fixture": "count-hits-bad-v1",
+          "challenge_sha256": "9ab2f30f055d5262c7029af4e8fd7991489589e73c2420fd5f68ef02aed6df4e"
+        },
+        {
+          "event": "invoked",
+          "id": "call_toy_2",
+          "n": 2,
+          "challenge_sha256": "bd5f3ba67eed52ba05a89fa353217987b69d92e9d575cdae3512f8635d3e5fb7"
+        },
+        {
+          "event": "invoked",
+          "id": "call_toy_3",
+          "n": 0,
+          "challenge_sha256": "76a79245c12594a14670086349b9197978eda35b0fdd579e36552d883fd7c0cc"
+        }
+      ],
+      "shared_fact_sha256": "c8d76e0b6208dce27e9891abb8160313ee2d7f7daf18d07e9f7617ff349534fd",
+      "snapshot_sha256": "01d2d1b2f99a68eeb08d792c577d06448826920b8c794ba3f14e60e9474623c9"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "purpose": "qkv_only_vs_split_operator_diagnostic_not_service_benchmark",
+  "image_id": "sha256:28e47ed30260eaaab0fee0251b53018766afc2dc61e1c8e4c65be4b1e6d088ff",
+  "gguf_sha256": "d1df86f9332b75424ab3f7e14fdc2cf20aec93fa1e4a86393bb4e75057f24180",
+  "source_sha256": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+  "layers": [0, 3, 7, 11, 19, 27],
+  "shape_order": [130, 1, 768, 2, 260, 1536],
+  "negative_control_shape_order": [130, 768],
+  "activation_seed": 26617,
+  "warm_sweeps_per_arm": 2,
+  "sweeps_per_sample": 3,
+  "sample_orders": ["ab", "ba", "ba", "ab", "ab", "ba"],
+  "minimum_decode_saving_pct": 5.0,
+  "minimum_decode_favorable_pairs": 4,
+  "maximum_prefill_slowdown_pct": 3.0
+}

@@ -1,0 +1,9 @@
+{
+  "scope": "first launch; infra-no-measurement",
+  "bundle_sha256": "6d797e16ebb5ff875bb48a3f2a1cb010c074209fa94006289e545364625c7a3e",
+  "run_closed": "2026-11-23T18:23:27+08:00\t7",
+  "raw_engine_requests": 0,
+  "log": "sudo: a password is required",
+  "post_compute_empty": true,
+  "archive": "spark26-v32-g1-d2.UYO8Ol"
+}

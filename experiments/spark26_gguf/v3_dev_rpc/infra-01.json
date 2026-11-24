@@ -1,0 +1,8 @@
+{
+  "status": "insufficient_evidence",
+  "raw": "spark26-v3-rpc.d173Ox",
+  "bundle": "93c4cbb9fab0c83fc875c61a54aed4e2ebf91008bad0086a85295decbc47500a",
+  "operation": "develop_quality",
+  "error": "non-root candidate could not read legacy E0 shell launcher with restricted file mode; observer got no responses",
+  "node_milliseconds": 1458
+}

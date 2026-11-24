@@ -1,0 +1,574 @@
+{
+  "cases": {
+    "all_truncated": {
+      "allocated_input": 25146,
+      "allocated_output": 16000,
+      "charged_input": 400,
+      "charged_output": 16000,
+      "decision": {
+        "eligible_cell": null,
+        "outcome": "stop_parameter_screen_shrink_task"
+      },
+      "dispatched_request_sha256": [
+        "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+        "dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a",
+        "219db6400bd1b94d2b9c6d5bd1b021efd6be955b72656a4cdf5905486ad1f7ca",
+        "5c60159bcfea66299cf1650ac6fd6026c8602cadd11195a14f01c2ab70b0d340"
+      ],
+      "gpu_calls": 0,
+      "manifest_sha256": "4259814224d61a4f13323b878736ce93483b023c4d33af0256f0103984d648f2",
+      "mock_calls": 4,
+      "paid_calls": 0,
+      "protocol": "p3-context-2x2-offline-freeze-v1-20261123",
+      "rows": [
+        {
+          "category": "truncated_no_action",
+          "cell": "high-short",
+          "charged_input": 100,
+          "charged_output": 4000,
+          "detail": "generation_truncated",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "length",
+          "input_overrun": 0,
+          "input_reserved": 2948,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "right_censored_at_response_end",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 4000,
+            "reasoning": 3990
+          },
+          "request_bytes": 10196,
+          "request_sha256": "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+          "response_sha256": "14c1a17801ac6a1accd96eabb44e344acefae38d69c87f25fe7792c05986c47b",
+          "status": "settled",
+          "tool_result_bytes": 8163
+        },
+        {
+          "category": "truncated_no_action",
+          "cell": "max-long",
+          "charged_input": 100,
+          "charged_output": 4000,
+          "detail": "generation_truncated",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "length",
+          "input_overrun": 0,
+          "input_reserved": 9625,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "right_censored_at_response_end",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 4000,
+            "reasoning": 4000
+          },
+          "request_bytes": 40993,
+          "request_sha256": "dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a",
+          "response_sha256": "0926cf56d950c4ffe4fc6234f30dc634f4d2cff44cd3071363324fcf4f4e01f0",
+          "status": "settled",
+          "tool_result_bytes": 38532
+        },
+        {
+          "category": "truncated_no_action",
+          "cell": "max-short",
+          "charged_input": 100,
+          "charged_output": 4000,
+          "detail": "generation_truncated",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "length",
+          "input_overrun": 0,
+          "input_reserved": 2948,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "right_censored_at_response_end",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 4000,
+            "reasoning": 3990
+          },
+          "request_bytes": 10195,
+          "request_sha256": "219db6400bd1b94d2b9c6d5bd1b021efd6be955b72656a4cdf5905486ad1f7ca",
+          "response_sha256": "14c1a17801ac6a1accd96eabb44e344acefae38d69c87f25fe7792c05986c47b",
+          "status": "settled",
+          "tool_result_bytes": 8163
+        },
+        {
+          "category": "truncated_no_action",
+          "cell": "high-long",
+          "charged_input": 100,
+          "charged_output": 4000,
+          "detail": "generation_truncated",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "length",
+          "input_overrun": 0,
+          "input_reserved": 9625,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "right_censored_at_response_end",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 4000,
+            "reasoning": 4000
+          },
+          "request_bytes": 40994,
+          "request_sha256": "5c60159bcfea66299cf1650ac6fd6026c8602cadd11195a14f01c2ab70b0d340",
+          "response_sha256": "0926cf56d950c4ffe4fc6234f30dc634f4d2cff44cd3071363324fcf4f4e01f0",
+          "status": "settled",
+          "tool_result_bytes": 38532
+        }
+      ],
+      "stop": null
+    },
+    "fingerprint_mismatch": {
+      "allocated_input": 12573,
+      "allocated_output": 8000,
+      "charged_input": 200,
+      "charged_output": 100,
+      "decision": {
+        "eligible_cell": null,
+        "outcome": "incomplete_evidence"
+      },
+      "dispatched_request_sha256": [
+        "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+        "dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a"
+      ],
+      "gpu_calls": 0,
+      "manifest_sha256": "4259814224d61a4f13323b878736ce93483b023c4d33af0256f0103984d648f2",
+      "mock_calls": 2,
+      "paid_calls": 0,
+      "protocol": "p3-context-2x2-offline-freeze-v1-20261123",
+      "rows": [
+        {
+          "category": "effective_tool_action",
+          "cell": "high-short",
+          "charged_input": 100,
+          "charged_output": 50,
+          "detail": "toy_gate_passed",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "tool_calls",
+          "input_overrun": 0,
+          "input_reserved": 2948,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "before_effective_action",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 50,
+            "reasoning": 40
+          },
+          "request_bytes": 10196,
+          "request_sha256": "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+          "response_sha256": "446d641ea29ccc9d83c986226cd6f67a411537712db55c932633f8d3b8432ab4",
+          "status": "settled",
+          "tool_result_bytes": 8163
+        },
+        {
+          "cell": "max-long",
+          "charged_input": 100,
+          "charged_output": 50,
+          "dispatched": true,
+          "fingerprint_matches": false,
+          "finish_reason": "stop",
+          "input_overrun": 0,
+          "input_reserved": 9625,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 50,
+            "reasoning": 40
+          },
+          "request_bytes": 40993,
+          "request_sha256": "dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a",
+          "response_sha256": "36d39fb26adac7cb0549e859fb13c8a8cc6d6f1ac4595b818fd97263c699da53",
+          "status": "fingerprint_mismatch",
+          "tool_result_bytes": 38532
+        }
+      ],
+      "stop": "fingerprint_mismatch"
+    },
+    "four_cells": {
+      "allocated_input": 25146,
+      "allocated_output": 16000,
+      "charged_input": 400,
+      "charged_output": 4150,
+      "decision": {
+        "eligible_cell": "max-short",
+        "outcome": "eligible_for_separately_authorized_replication"
+      },
+      "dispatched_request_sha256": [
+        "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+        "dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a",
+        "219db6400bd1b94d2b9c6d5bd1b021efd6be955b72656a4cdf5905486ad1f7ca",
+        "5c60159bcfea66299cf1650ac6fd6026c8602cadd11195a14f01c2ab70b0d340"
+      ],
+      "gpu_calls": 0,
+      "manifest_sha256": "4259814224d61a4f13323b878736ce93483b023c4d33af0256f0103984d648f2",
+      "mock_calls": 4,
+      "paid_calls": 0,
+      "protocol": "p3-context-2x2-offline-freeze-v1-20261123",
+      "rows": [
+        {
+          "category": "normal_end_no_action",
+          "cell": "high-short",
+          "charged_input": 100,
+          "charged_output": 50,
+          "detail": "no_tool_attempt",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "stop",
+          "input_overrun": 0,
+          "input_reserved": 2948,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "right_censored_at_response_end",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 50,
+            "reasoning": 40
+          },
+          "request_bytes": 10196,
+          "request_sha256": "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+          "response_sha256": "960d0d06b66d4d348525687a9b7896ea52c2c338d27b87c761e83b40b6cf30c1",
+          "status": "settled",
+          "tool_result_bytes": 8163
+        },
+        {
+          "category": "truncated_no_action",
+          "cell": "max-long",
+          "charged_input": 100,
+          "charged_output": 4000,
+          "detail": "generation_truncated",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "length",
+          "input_overrun": 0,
+          "input_reserved": 9625,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "right_censored_at_response_end",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 4000,
+            "reasoning": 3990
+          },
+          "request_bytes": 40993,
+          "request_sha256": "dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a",
+          "response_sha256": "c018fa4846ee665398f8b3e2a09bd71a799004d308c898fa878c9f0d7d015680",
+          "status": "settled",
+          "tool_result_bytes": 38532
+        },
+        {
+          "category": "effective_tool_action",
+          "cell": "max-short",
+          "charged_input": 100,
+          "charged_output": 50,
+          "detail": "toy_gate_passed",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "tool_calls",
+          "input_overrun": 0,
+          "input_reserved": 2948,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "before_effective_action",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 50,
+            "reasoning": 40
+          },
+          "request_bytes": 10195,
+          "request_sha256": "219db6400bd1b94d2b9c6d5bd1b021efd6be955b72656a4cdf5905486ad1f7ca",
+          "response_sha256": "9d39e03e49820b98af1126ef92f2ad7f27c6fe4e6629217d2dc9765d7575916b",
+          "status": "settled",
+          "tool_result_bytes": 8163
+        },
+        {
+          "category": "normal_end_no_action",
+          "cell": "high-long",
+          "charged_input": 100,
+          "charged_output": 50,
+          "detail": "invalid_tool_attempt",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "tool_calls",
+          "input_overrun": 0,
+          "input_reserved": 9625,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "right_censored_at_response_end",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 50,
+            "reasoning": 40
+          },
+          "request_bytes": 40994,
+          "request_sha256": "5c60159bcfea66299cf1650ac6fd6026c8602cadd11195a14f01c2ab70b0d340",
+          "response_sha256": "41b56f2a7395426adc06bb31e54f4103cd77758b4a96a286c92c8471d6cbf1ad",
+          "status": "settled",
+          "tool_result_bytes": 38532
+        }
+      ],
+      "stop": null
+    },
+    "input_overrun": {
+      "allocated_input": 12573,
+      "allocated_output": 8000,
+      "charged_input": 9732,
+      "charged_output": 4050,
+      "decision": {
+        "eligible_cell": null,
+        "outcome": "incomplete_evidence"
+      },
+      "dispatched_request_sha256": [
+        "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+        "dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a"
+      ],
+      "gpu_calls": 0,
+      "manifest_sha256": "4259814224d61a4f13323b878736ce93483b023c4d33af0256f0103984d648f2",
+      "mock_calls": 2,
+      "paid_calls": 0,
+      "protocol": "p3-context-2x2-offline-freeze-v1-20261123",
+      "rows": [
+        {
+          "category": "normal_end_no_action",
+          "cell": "high-short",
+          "charged_input": 100,
+          "charged_output": 50,
+          "detail": "no_tool_attempt",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "stop",
+          "input_overrun": 0,
+          "input_reserved": 2948,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "right_censored_at_response_end",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 50,
+            "reasoning": 40
+          },
+          "request_bytes": 10196,
+          "request_sha256": "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+          "response_sha256": "960d0d06b66d4d348525687a9b7896ea52c2c338d27b87c761e83b40b6cf30c1",
+          "status": "settled",
+          "tool_result_bytes": 8163
+        },
+        {
+          "cell": "max-long",
+          "charged_input": 9632,
+          "charged_output": 4000,
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "tool_calls",
+          "input_overrun": 7,
+          "input_reserved": 9625,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 9632,
+            "output": 50,
+            "reasoning": 40
+          },
+          "request_bytes": 40993,
+          "request_sha256": "dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a",
+          "response_sha256": "64236181d2ba81710c6ae70f20faaea6b61db2fbe7e9186d67a0695e3d78c0f9",
+          "status": "usage_uncertain",
+          "tool_result_bytes": 38532,
+          "usage_issue": "over_reservation"
+        }
+      ],
+      "stop": "usage_uncertain"
+    },
+    "missing_usage": {
+      "allocated_input": 2948,
+      "allocated_output": 4000,
+      "charged_input": 2948,
+      "charged_output": 4000,
+      "decision": {
+        "eligible_cell": null,
+        "outcome": "incomplete_evidence"
+      },
+      "dispatched_request_sha256": [
+        "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d"
+      ],
+      "gpu_calls": 0,
+      "manifest_sha256": "4259814224d61a4f13323b878736ce93483b023c4d33af0256f0103984d648f2",
+      "mock_calls": 1,
+      "paid_calls": 0,
+      "protocol": "p3-context-2x2-offline-freeze-v1-20261123",
+      "rows": [
+        {
+          "cell": "high-short",
+          "charged_input": 2948,
+          "charged_output": 4000,
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "stop",
+          "input_overrun": null,
+          "input_reserved": 2948,
+          "output_overrun": null,
+          "output_reserved": 4000,
+          "protocol_issue": null,
+          "reported_usage": null,
+          "request_bytes": 10196,
+          "request_sha256": "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+          "response_sha256": "a9b1e550e340a7ed8319fd5e0965eb4ada8f60db0167faacbcbf1da3478607e1",
+          "status": "usage_uncertain",
+          "tool_result_bytes": 8163,
+          "usage_issue": "missing_usage"
+        }
+      ],
+      "stop": "usage_uncertain"
+    },
+    "output_overrun": {
+      "allocated_input": 2948,
+      "allocated_output": 4000,
+      "charged_input": 2948,
+      "charged_output": 4013,
+      "decision": {
+        "eligible_cell": null,
+        "outcome": "incomplete_evidence"
+      },
+      "dispatched_request_sha256": [
+        "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d"
+      ],
+      "gpu_calls": 0,
+      "manifest_sha256": "4259814224d61a4f13323b878736ce93483b023c4d33af0256f0103984d648f2",
+      "mock_calls": 1,
+      "paid_calls": 0,
+      "protocol": "p3-context-2x2-offline-freeze-v1-20261123",
+      "rows": [
+        {
+          "cell": "high-short",
+          "charged_input": 2948,
+          "charged_output": 4013,
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "length",
+          "input_overrun": 0,
+          "input_reserved": 2948,
+          "output_overrun": 13,
+          "output_reserved": 4000,
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 50,
+            "output": 4013,
+            "reasoning": 4000
+          },
+          "request_bytes": 10196,
+          "request_sha256": "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+          "response_sha256": "0198d1e3cc94a1b5750b736624ff1c223d1c1f690ad2cf4690aa5b42a331d9f6",
+          "status": "usage_uncertain",
+          "tool_result_bytes": 8163,
+          "usage_issue": "over_reservation"
+        }
+      ],
+      "stop": "usage_uncertain"
+    },
+    "reservation_failed": {
+      "allocated_input": 2948,
+      "allocated_output": 4000,
+      "charged_input": 100,
+      "charged_output": 50,
+      "decision": {
+        "eligible_cell": null,
+        "outcome": "incomplete_evidence"
+      },
+      "dispatched_request_sha256": [
+        "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d"
+      ],
+      "gpu_calls": 0,
+      "manifest_sha256": "4259814224d61a4f13323b878736ce93483b023c4d33af0256f0103984d648f2",
+      "mock_calls": 1,
+      "paid_calls": 0,
+      "protocol": "p3-context-2x2-offline-freeze-v1-20261123",
+      "rows": [
+        {
+          "category": "normal_end_no_action",
+          "cell": "high-short",
+          "charged_input": 100,
+          "charged_output": 50,
+          "detail": "no_tool_attempt",
+          "dispatched": true,
+          "fingerprint_matches": true,
+          "finish_reason": "stop",
+          "input_overrun": 0,
+          "input_reserved": 2948,
+          "output_overrun": 0,
+          "output_reserved": 4000,
+          "prefix_observed_utf8_bytes": 26,
+          "prefix_public_tokenizer_tokens": 4,
+          "prefix_state": "right_censored_at_response_end",
+          "protocol_issue": null,
+          "reported_usage": {
+            "input": 100,
+            "output": 50,
+            "reasoning": 40
+          },
+          "request_bytes": 10196,
+          "request_sha256": "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d",
+          "response_sha256": "960d0d06b66d4d348525687a9b7896ea52c2c338d27b87c761e83b40b6cf30c1",
+          "status": "settled",
+          "tool_result_bytes": 8163
+        },
+        {
+          "cell": "max-long",
+          "charged_input": 0,
+          "charged_output": 0,
+          "dispatched": false,
+          "request_bytes": 40993,
+          "request_sha256": "dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a",
+          "status": "reservation_failed",
+          "tool_result_bytes": 38532
+        }
+      ],
+      "stop": "reservation_failed"
+    }
+  },
+  "gpu_calls": 0,
+  "manifest_sha256": "4259814224d61a4f13323b878736ce93483b023c4d33af0256f0103984d648f2",
+  "paid_calls": 0,
+  "protocol": "p3-context-2x2-offline-freeze-v1-20261123",
+  "result": "pass_offline_only",
+  "tests": 13
+}

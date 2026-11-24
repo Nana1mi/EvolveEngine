@@ -1,0 +1,182 @@
+{
+  "status": "failed",
+  "scope": "isolated Pi model/tool/metering preflight; synthetic fixture; no engine, GPU or RSI",
+  "ceiling": {
+    "input": 32000,
+    "output": 6000,
+    "turns": 5,
+    "seconds": 150
+  },
+  "pi": "1.5.2",
+  "identity": {
+    "id": "deepseek-flash",
+    "name": "DeepSeek-V4.1-Flash",
+    "owner": "deepseek",
+    "required_response_fingerprint": null
+  },
+  "session_ms": 9563,
+  "turns": [
+    {
+      "turn": 1,
+      "model_requested": "deepseek-flash",
+      "thinking": "enabled",
+      "reasoning_effort": "max",
+      "input_reservation": 2927,
+      "max_tokens": 2000,
+      "prior_tool_thinking_replayed": false,
+      "upstream_body_sha256": "a55e9aa75e74fd824391fcd51d6f6e43ddb3c62e98bc24b7c26ec3947b242e39",
+      "models": [
+        "deepseek-flash"
+      ],
+      "fingerprints": [
+        "bc19ba97cbe016479903222bb1578db6"
+      ],
+      "reasoning_delta_seen": false,
+      "finish_reasons": [
+        "tool_calls"
+      ],
+      "usage": {
+        "prompt_tokens": 854,
+        "completion_tokens": 105,
+        "total_tokens": 959,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 854
+      },
+      "provider_ms": 937
+    },
+    {
+      "turn": 2,
+      "model_requested": "deepseek-flash",
+      "thinking": "enabled",
+      "reasoning_effort": "max",
+      "input_reservation": 3399,
+      "max_tokens": 2000,
+      "prior_tool_thinking_replayed": false,
+      "upstream_body_sha256": "b8fa0fe6d4b77b9137b4332b0850c48e49f4515b3f9bd5cad4e4bdc4254f2b25",
+      "models": [
+        "deepseek-flash"
+      ],
+      "fingerprints": [
+        "bc19ba97cbe016479903222bb1578db6"
+      ],
+      "reasoning_delta_seen": true,
+      "finish_reasons": [
+        "tool_calls"
+      ],
+      "usage": {
+        "prompt_tokens": 979,
+        "completion_tokens": 180,
+        "total_tokens": 1159,
+        "prompt_tokens_details": {
+          "cached_tokens": 768
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 71
+        },
+        "prompt_cache_hit_tokens": 768,
+        "prompt_cache_miss_tokens": 211
+      },
+      "provider_ms": 1625
+    },
+    {
+      "turn": 3,
+      "model_requested": "deepseek-flash",
+      "thinking": "enabled",
+      "reasoning_effort": "max",
+      "input_reservation": 4172,
+      "max_tokens": 2000,
+      "prior_tool_thinking_replayed": true,
+      "upstream_body_sha256": "1e71b2b4d340945955fe755c950cb2c38e0b25a8132f403f3ab20cb92ea81a96",
+      "models": [
+        "deepseek-flash"
+      ],
+      "fingerprints": [
+        "bc19ba97cbe016479903222bb1578db6"
+      ],
+      "reasoning_delta_seen": true,
+      "finish_reasons": [
+        "tool_calls"
+      ],
+      "usage": {
+        "prompt_tokens": 1179,
+        "completion_tokens": 367,
+        "total_tokens": 1546,
+        "prompt_tokens_details": {
+          "cached_tokens": 1024
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 305
+        },
+        "prompt_cache_hit_tokens": 1024,
+        "prompt_cache_miss_tokens": 155
+      },
+      "provider_ms": 2313
+    },
+    {
+      "turn": 4,
+      "model_requested": "deepseek-flash",
+      "thinking": "enabled",
+      "reasoning_effort": "max",
+      "input_reservation": 5965,
+      "max_tokens": 2000,
+      "prior_tool_thinking_replayed": true,
+      "upstream_body_sha256": "41d854cf0d9b15a4cd92ea9c9fcd72a6678650dbb5d94f5fe93e9e9ba79cedaf",
+      "models": [
+        "deepseek-flash"
+      ],
+      "fingerprints": [
+        "bc19ba97cbe016479903222bb1578db6"
+      ],
+      "reasoning_delta_seen": true,
+      "finish_reasons": [
+        "stop"
+      ],
+      "usage": {
+        "prompt_tokens": 1566,
+        "completion_tokens": 480,
+        "total_tokens": 2046,
+        "prompt_tokens_details": {
+          "cached_tokens": 1408
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 151
+        },
+        "prompt_cache_hit_tokens": 1408,
+        "prompt_cache_miss_tokens": 158
+      },
+      "provider_ms": 3203
+    }
+  ],
+  "usage": {
+    "wall_ms": 0,
+    "node_ms": 0,
+    "input_tokens": 4578,
+    "output_tokens": 1132,
+    "blocks": 0
+  },
+  "tools": [
+    {
+      "tool": "read",
+      "accepted": false,
+      "ordinal": 1
+    },
+    {
+      "tool": "read",
+      "accepted": false,
+      "ordinal": 2
+    },
+    {
+      "tool": "read",
+      "accepted": false,
+      "ordinal": 3
+    }
+  ],
+  "failure": "Expecting value: line 1 column 1 (char 0)",
+  "total_ms": 11016
+}

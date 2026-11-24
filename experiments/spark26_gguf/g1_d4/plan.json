@@ -1,0 +1,33 @@
+{
+  "image": "sha256:28e47ed30260eaaab0fee0251b53018766afc2dc61e1c8e4c65be4b1e6d088ff",
+  "weight": "d1df86f9332b75424ab3f7e14fdc2cf20aec93fa1e4a86393bb4e75057f24180",
+  "gguf_py": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+  "context_length": 8192,
+  "max_total_tokens": 16384,
+  "max_running_requests": 4,
+  "qkv": "a5c3e5157bb8cfba8a5db700c21ac7ce226146648c676f3d30680e31d57c4b0b",
+  "kind": "G1-D4 layer-local attribution",
+  "layer": "model.layers.0.self_attn.q_k_v_proj",
+  "positions": [
+    0,
+    1,
+    24,
+    25
+  ],
+  "activation_rows": [
+    "first",
+    "middle",
+    "last"
+  ],
+  "channels": [
+    0,
+    1,
+    127,
+    2047,
+    2048,
+    2559,
+    2560,
+    3071
+  ],
+  "d3_raw_manifest": "dc937a78d2c6de9dd87323b62b9a89d159d9dcef77b2adab19f8484b5922f6da"
+}

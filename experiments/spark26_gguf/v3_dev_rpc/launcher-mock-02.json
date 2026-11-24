@@ -1,0 +1,108 @@
+{
+  "status": "pass_launcher_mock_scope",
+  "scope": "pilot launcher mode with mock upstream; not a free pilot",
+  "gpu_calls": 0,
+  "paid_calls": 0,
+  "session": {
+    "run": "db59786fd9427054",
+    "image": "sha256:efe1685cb8525c933297166615061df41d6735bc927cd6650c31354bb0afc41e",
+    "pi": "1.5.2",
+    "node": "24.13.0",
+    "snapshot": "33eefc505e2e2f30960539ac7ad695f8f66e48d3d1f62b4a056a78834dd0839f",
+    "isolation": {
+      "network": "none",
+      "read_only_root": true,
+      "user": "12345:12345",
+      "mount_writeable": {
+        "/gate": false,
+        "/input": false,
+        "/opt/ee/v3_guest.mjs": false,
+        "/opt/ee/v3_rpc.mjs": false
+      },
+      "gpu": false
+    },
+    "relay_events": 3,
+    "transport_fault": null,
+    "isolated_state_removed": true,
+    "socket_removed": true,
+    "unchanged_install": true,
+    "wall_ms": 2328,
+    "provider_rows": [
+      {
+        "turn": 1,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "f65d671a279cae15421bfb541de576f597d937b53a20153ec19bf3a85498e952",
+        "prior_tool_contexts": 0,
+        "toolset_sha": "6ff36237ccbf3c456009b71c585601980f49017b3109efdf6e8c6b846fae063e",
+        "prompt_fragments": [],
+        "input_reserved": 6280,
+        "output_reserved": 1000,
+        "input_tokens": 60,
+        "output_including_reasoning": 12,
+        "reasoning_tokens": 5,
+        "finish": "tool_calls",
+        "usage": "settled",
+        "versions": [],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 0
+      },
+      {
+        "turn": 2,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "4d54f7274ec5ea722527a42ce70d3ca319f73ec5615db14483b9ca7465615741",
+        "prior_tool_contexts": 1,
+        "toolset_sha": "6ff36237ccbf3c456009b71c585601980f49017b3109efdf6e8c6b846fae063e",
+        "prompt_fragments": [],
+        "input_reserved": 6801,
+        "output_reserved": 1000,
+        "input_tokens": 60,
+        "output_including_reasoning": 12,
+        "reasoning_tokens": 5,
+        "finish": "stop",
+        "usage": "settled",
+        "versions": [],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 0
+      }
+    ],
+    "gateway_events": [],
+    "timed_out": false,
+    "pi_tool_executions": [
+      {
+        "name": "ee_rpc",
+        "error": false
+      }
+    ],
+    "pi_errors": 0,
+    "pi_exit": 0,
+    "status": "pi_session_complete"
+  },
+  "trusted_rows": [
+    {
+      "event_id": 1,
+      "operation": "harness_status",
+      "status": "ok",
+      "active": "33eefc505e2e2f30960539ac7ad695f8f66e48d3d1f62b4a056a78834dd0839f"
+    }
+  ],
+  "runtime": {
+    "pi_version": "1.5.2",
+    "pi_image": "efe1685cb8525c933297166615061df41d6735bc927cd6650c31354bb0afc41e",
+    "node_version": "24.13.0",
+    "package_lock_sha": "28f1bd388de4038dcdc606f03126d7cf2151245e4660dc36deb68dd28ff6c7b5",
+    "runner_sha": "c386d40a87a84ccbc9c3a05ea38067e36cd73b30b97cc2b97a7b488812848044",
+    "base_config_sha": "fd50f491c34321980b159741486ae730919bcd7cfa99f3a86cdf46081c292582"
+  }
+}

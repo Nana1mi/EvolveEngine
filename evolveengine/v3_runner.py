@@ -1,0 +1,188 @@
+"""One isolated Pi session shell for fixed/evolving/evaluation modes.
+
+The disposable guest has no network and sees only per-launch RO inputs and a private
+socket. Provider, policy, and development callbacks run on the trusted host. No shell
+commands from an Agent are executed on the host.
+"""
+import base64
+from dataclasses import dataclass
+import hmac
+import json
+from pathlib import Path
+import re
+import secrets
+import subprocess
+import tempfile
+from threading import Event, Thread
+import time
+
+from .v3_harness import canonical, digest, relative
+from .v3_provider import LeaseError
+
+
+HERE=Path(__file__).resolve().parent
+MAX_FRAME=768*1024
+MAX_REPLY=4*1024*1024
+RUNNER_FILES=(HERE/'v3_guest.mjs',HERE/'v3_rpc.mjs',HERE/'v3_relay.py',HERE/'v3_paged_read.mjs',Path(__file__))
+IMAGE=re.compile(r'sha256:[0-9a-f]{64}\Z')
+
+
+def need(condition,message):
+    if not condition:raise ValueError(message)
+
+
+def docker(*args,timeout=20,check=True):
+    p=subprocess.run(['docker',*map(str,args)],capture_output=True,timeout=timeout)
+    if check and p.returncode:raise RuntimeError(f'Docker {args[0]} failed (rc={p.returncode})')
+    return p
+
+
+def ro(src,dst,kind='bind',writable=False):
+    return f'type={kind},src={src},dst={dst}'+('' if writable else ',readonly')
+
+
+def launch(name):
+    return ['--name',name,'--network','none','--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','160','--memory','768m','--cpus','1']
+
+
+class Gateway:
+    def __init__(self,provider,handler,token=None):
+        self.provider=provider;self.handler=handler;self.token=token or secrets.token_urlsafe(26)
+        self.events=[]
+
+    def dispatch(self,path,raw,auth):
+        if path=='/v1/chat/completions':
+            if not isinstance(auth,str) or not hmac.compare_digest(auth,'Bearer '+self.token):
+                self.events.append(dict(kind='denied',route='provider'));return 403,'application/json',b'{"denied":true}'
+            try:return 200,'text/event-stream',self.provider.exchange(raw)
+            except (ValueError,LeaseError):
+                self.events.append(dict(kind='denied',route='provider_protocol_or_budget'));return 400,'application/json',b'{"error":"model request unavailable"}'
+        if re.fullmatch(r'/rpc/[a-z_]{1,40}',path):
+            try:
+                data=json.loads(raw);need(type(data) is dict,'RPC requires an object')
+                status, result=self.handler(path[5:],data)
+                return status,'application/json',canonical(result)
+            except (ValueError,KeyError,TypeError,PermissionError):
+                self.events.append(dict(kind='denied',route='tool_request'));return 403,'application/json',b'{"denied":true}'
+        self.events.append(dict(kind='denied',route='unregistered'));return 404,'application/json',b'{"denied":true}'
+
+
+class Relay:
+    """Bounded sequence-numbered stdio transport; sidecar gets no host network or keys."""
+    def __init__(self,bridge_name,image,volume,dispatch):
+        self.ready=Event();self.dispatch=dispatch;self.error=None;self.count=0
+        args=['docker','run','--rm','-i',*launch(bridge_name),'--read-only','--mount',ro(volume,'/gate','volume',True),
+              '--mount',ro(HERE/'v3_relay.py','/opt/relay.py'),image,'python','-B','-u','/opt/relay.py']
+        self.err=tempfile.TemporaryFile();self.proc=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.err)
+        self.thread=Thread(target=self._serve,daemon=True);self.thread.start()
+
+    def _serve(self):
+        try:
+            need(json.loads(self.proc.stdout.readline(4096))=={'ready':True},'relay failed startup')
+            self.ready.set()
+            while line:=self.proc.stdout.readline(MAX_FRAME+1):
+                need(line.endswith(b'\n') and len(line)<=MAX_FRAME,'oversize relay frame')
+                f=json.loads(line);need(set(f)=={'id','path','body','auth'} and type(f['id']) is int and f['id']==self.count+1,'invalid relay envelope')
+                raw=base64.b64decode(f['body'],validate=True)
+                status,typ,body=self.dispatch(f['path'],raw,f['auth'])
+                need(type(body) is bytes and len(body)<=MAX_REPLY,'RPC reply exceeds size cap')
+                reply=dict(id=f['id'],status=status,type=typ,body=base64.b64encode(body).decode('ascii'))
+                self.count+=1;self.proc.stdin.write(canonical(reply)+b'\n');self.proc.stdin.flush()
+        except (ValueError,KeyError,OSError,TypeError,RuntimeError) as e:self.error=type(e).__name__;self.ready.set()
+
+    def wait(self):
+        need(self.ready.wait(22) and self.proc.poll() is None and not self.error,'relay unavailable')
+
+    def close(self):
+        try:self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:self.proc.kill();self.proc.wait(timeout=5)
+        self.thread.join(8);self.proc.stdin.close();self.proc.stdout.close();self.err.close()
+        need(not self.thread.is_alive(),'trusted operation did not settle')
+
+
+@dataclass(frozen=True)
+class Images:
+    pi: str
+    bridge: str
+    def verify(self):
+        for im in (self.pi,self.bridge):
+            need(isinstance(im,str) and IMAGE.fullmatch(im),'mutable image reference denied')
+            need(docker('image','inspect',im,'--format','{{.Id}}').stdout.strip().decode()==im,'image identity drift')
+
+
+def stage_tree(root,files):
+    root.mkdir(exist_ok=False)
+    for name,body in sorted(files.items()):
+        p=relative(name);need(type(body) is bytes,'engine byte contract')
+        f=root.joinpath(*p.parts);f.parent.mkdir(parents=True,exist_ok=True)
+        with f.open('xb') as w:w.write(body)
+
+
+def inventory(root):
+    paths=sorted(root.rglob('*'));need(not any(p.is_symlink() for p in paths),'unexpected symlink')
+    return {p.relative_to(root).as_posix():digest(p.read_bytes()) for p in paths if p.is_file()}
+
+
+def sandbox(images, source, snapshot, runtime, profile, base_system, prompt, gateway, *, seconds, tools=None, rpc=True, paged_read=False):
+    """Run a real Pi process; return scoped external evidence (never an Engine score)."""
+    images.verify();need(type(seconds) is int and seconds>0,'session requires bounded wall time')
+    need(images.pi=='sha256:'+runtime['pi_image'],'runtime manifest image mismatch')
+    need(type(paged_read) is bool and (not paged_read or tools is None or 'read' in tools),'paging cannot add read permission')
+    version=docker('run','--rm','--network','none',images.pi,'node','/opt/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js','--version').stdout.decode().strip()
+    need(version==runtime['pi_version'],'Pi version mismatch')
+    node=docker('run','--rm','--network','none',images.pi,'node','--version').stdout.decode().strip().removeprefix('v')
+    need(node==runtime['node_version'],'Node version mismatch')
+    plock=docker('run','--rm','--network','none',images.pi,'cat','/opt/pi/package-lock.json').stdout
+    need(digest(plock)==runtime['package_lock_sha'],'runtime package lock changed')
+    codeid=digest(canonical({p.name:digest(p.read_bytes()) for p in RUNNER_FILES}))
+    need(codeid==runtime['runner_sha'] and digest(canonical(dict(profile=profile,system=base_system,tools=tools,rpc=rpc,paged_read=paged_read)))==runtime['base_config_sha'],'runner or common configuration drift')
+    snapshot.recheck(runtime)
+    load=snapshot.manifest['load']; hb=dict(snapshot.items); parts=[hb[x].decode() for x in load['prompts']+load['memory']]
+    system='\n\n'.join([base_system,*parts])
+    # The provider must verify actual outbound prompt fragments, not trust the guest's loaded event.
+    need(tuple(parts)==gateway.provider._expected_prompt_fragments,'Harness prompt verification not paired to install')
+    spec=dict(system=system,prompt=prompt,profile=profile,tools=tools,rpc=rpc,paged_read=paged_read,token=gateway.token,
+              extensions=load['extensions'],skills=load['skills'],templates=[x for x in load['workflows'] if x.endswith('.md')])
+    run=secrets.token_hex(8);name='ee-v3-'+run;side=name+'-relay';vol=name+'-sock'; relay=None;timedout=False
+    started=time.monotonic(); report=dict(run=run,image=images.pi,pi=version,node=node,snapshot=snapshot.identity)
+    with tempfile.TemporaryDirectory(prefix='ee-v3-input-') as t:
+        root=Path(t);stage_tree(root/'engine',source);snapshot.stage(root/'harness',runtime);(root/'spec.json').write_bytes(canonical(spec))
+        before=inventory(root);docker('volume','create',vol)
+        try:
+            relay=Relay(side,images.bridge,vol,gateway.dispatch);relay.wait()
+            extra=['--mount',ro(HERE/'v3_paged_read.mjs','/opt/ee/v3_paged_read.mjs')] if paged_read else []
+            options=[*launch(name),'--read-only','--user','12345:12345','--tmpfs','/scratch:rw,nosuid,nodev,mode=1777,size=384m',
+                '--tmpfs','/tmp:rw,nosuid,nodev,mode=1777,size=64m','--mount',ro(vol,'/gate','volume'),'--mount',ro(root,'/input'),
+                '--mount',ro(HERE/'v3_guest.mjs','/opt/ee/v3_guest.mjs'),'--mount',ro(HERE/'v3_rpc.mjs','/opt/ee/v3_rpc.mjs'),*extra,images.pi,'node','/opt/ee/v3_guest.mjs']
+            docker('create',*options,timeout=30)
+            view=json.loads(docker('inspect',name).stdout)[0];h=view['HostConfig'];binds={a['Destination']:a['RW'] for a in view['Mounts']}
+            expected_mounts=['/input','/gate','/opt/ee/v3_guest.mjs','/opt/ee/v3_rpc.mjs']+(['/opt/ee/v3_paged_read.mjs'] if paged_read else [])
+            need(view['Image']==images.pi and view['Config']['User']=='12345:12345' and not h['Privileged'] and not h.get('DeviceRequests') and h['NetworkMode']=='none' and h['ReadonlyRootfs']
+                 and h['CapDrop']==['ALL'] and h['SecurityOpt']==['no-new-privileges'] and set(h['Tmpfs'])=={'/scratch','/tmp'} and binds==dict.fromkeys(expected_mounts,False),'unexpected sandbox configuration')
+            report['isolation']=dict(network='none',read_only_root=True,user='12345:12345',mount_writeable=binds,gpu=False)
+            try: proc=docker('start','-a',name,timeout=seconds,check=False)
+            except subprocess.TimeoutExpired: timedout=True;proc=None
+        finally:
+            docker('rm','-f',name,check=False);docker('rm','-f',side,check=False)
+            if relay:relay.close();report['relay_events']=relay.count;report['transport_fault']=relay.error
+            report['isolated_state_removed']=(docker('inspect',name,check=False).returncode!=0 and docker('inspect',side,check=False).returncode!=0)
+            report['socket_removed']=docker('volume','rm',vol,check=False).returncode==0
+        report['unchanged_install']=inventory(root)==before
+    report['wall_ms']=round((time.monotonic()-started)*1000);report['provider_rows']=gateway.provider.rows;report['gateway_events']=gateway.events
+    report['timed_out']=timedout; report['pi_tool_executions']=[];report['pi_errors']=0
+    if proc:
+        report['pi_exit']=proc.returncode
+        for line in proc.stdout.splitlines():
+            if not line.startswith(b'{'):continue
+            try:e=json.loads(line)
+            except ValueError:continue
+            if e.get('type')=='tool_execution_end':report['pi_tool_executions'].append(dict(name=e.get('toolName'),error=e.get('isError')))
+            if e.get('type')=='message_end' and isinstance(m:=e.get('message'),dict) and m.get('stopReason')=='error':report['pi_errors']+=1
+    report['status']='pi_session_complete' if proc and proc.returncode==0 and not report['pi_errors'] and report['provider_rows'] and report['provider_rows'][-1]['result']=='complete' and report['provider_rows'][-1]['finish']=='stop' and report['unchanged_install'] and report['socket_removed'] and report['isolated_state_removed'] and not report.get('transport_fault') else 'not_completed'
+    return report
+
+
+def runtime_for(images,package_lock,profile,system,tools,*,rpc=True,paged_read=False):
+    return dict(pi_version='1.5.2',pi_image=images.pi.removeprefix('sha256:'),node_version='24.13.0',package_lock_sha=digest(package_lock),
+      runner_sha=digest(canonical({p.name:digest(p.read_bytes()) for p in RUNNER_FILES})),
+      base_config_sha=digest(canonical(dict(profile=profile,system=system,tools=tools,rpc=rpc,paged_read=paged_read))))

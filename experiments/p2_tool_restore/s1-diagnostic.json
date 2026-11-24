@@ -1,0 +1,331 @@
+{
+  "scope": "S1-only fixed six diagnostic replays; not the five-session P2 trajectory",
+  "attempts": [
+    {
+      "i": 0,
+      "trace": {
+        "wire": [
+          {
+            "turn": 1,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true
+          },
+          {
+            "turn": 2,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true,
+            "previous_tool": "write"
+          }
+        ],
+        "witness": [],
+        "boundary_errors": [],
+        "exit_code": 0,
+        "event_types": [
+          "session",
+          "agent_start",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "tool_execution_start",
+          "tool_execution_end",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "agent_end",
+          "agent_settled"
+        ],
+        "assistant_stop_reasons": [
+          "toolUse",
+          "stop"
+        ],
+        "assistant_errors": []
+      },
+      "status": "completed"
+    },
+    {
+      "i": 1,
+      "trace": {
+        "wire": [
+          {
+            "turn": 1,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true
+          }
+        ],
+        "witness": [],
+        "boundary_errors": [],
+        "exit_code": 0,
+        "event_types": [
+          "session",
+          "agent_start",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "agent_end",
+          "agent_settled"
+        ],
+        "assistant_stop_reasons": [
+          "error"
+        ],
+        "assistant_errors": [
+          "Connection error.: read ECONNRESET"
+        ]
+      },
+      "status": "not_completed",
+      "reason": "s1-B2: incomplete wire, rc=0, turns=1"
+    },
+    {
+      "i": 2,
+      "trace": {
+        "wire": [
+          {
+            "turn": 1,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true
+          },
+          {
+            "turn": 2,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true,
+            "previous_tool": "write"
+          }
+        ],
+        "witness": [],
+        "boundary_errors": [],
+        "exit_code": 0,
+        "event_types": [
+          "session",
+          "agent_start",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "tool_execution_start",
+          "tool_execution_end",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "agent_end",
+          "agent_settled"
+        ],
+        "assistant_stop_reasons": [
+          "toolUse",
+          "stop"
+        ],
+        "assistant_errors": []
+      },
+      "status": "completed"
+    },
+    {
+      "i": 3,
+      "trace": {
+        "wire": [
+          {
+            "turn": 1,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true
+          },
+          {
+            "turn": 2,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true,
+            "previous_tool": "write"
+          }
+        ],
+        "witness": [],
+        "boundary_errors": [],
+        "exit_code": 0,
+        "event_types": [
+          "session",
+          "agent_start",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "tool_execution_start",
+          "tool_execution_end",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "agent_end",
+          "agent_settled"
+        ],
+        "assistant_stop_reasons": [
+          "toolUse",
+          "stop"
+        ],
+        "assistant_errors": []
+      },
+      "status": "completed"
+    },
+    {
+      "i": 4,
+      "trace": {
+        "wire": [
+          {
+            "turn": 1,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true
+          },
+          {
+            "turn": 2,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true,
+            "previous_tool": "write"
+          }
+        ],
+        "witness": [],
+        "boundary_errors": [],
+        "exit_code": 0,
+        "event_types": [
+          "session",
+          "agent_start",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "tool_execution_start",
+          "tool_execution_end",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "agent_end",
+          "agent_settled"
+        ],
+        "assistant_stop_reasons": [
+          "toolUse",
+          "stop"
+        ],
+        "assistant_errors": []
+      },
+      "status": "completed"
+    },
+    {
+      "i": 5,
+      "trace": {
+        "wire": [
+          {
+            "turn": 1,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true
+          },
+          {
+            "turn": 2,
+            "tools": [
+              "read",
+              "write"
+            ],
+            "public_tool_schema_sha256": "01d1baf4cba7fd374bd31561b1d2f3eb86c88ebdb281107c5d8f5285efe8d668",
+            "max_verified": true,
+            "previous_tool": "write"
+          }
+        ],
+        "witness": [],
+        "boundary_errors": [],
+        "exit_code": 0,
+        "event_types": [
+          "session",
+          "agent_start",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "message_start",
+          "message_end",
+          "tool_execution_start",
+          "tool_execution_end",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "turn_start",
+          "message_start",
+          "message_end",
+          "turn_end",
+          "agent_end",
+          "agent_settled"
+        ],
+        "assistant_stop_reasons": [
+          "toolUse",
+          "stop"
+        ],
+        "assistant_errors": []
+      },
+      "status": "completed"
+    }
+  ]
+}

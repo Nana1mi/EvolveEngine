@@ -1,0 +1,691 @@
+{
+  "status": "pass_offline_max_output",
+  "scope": "actual pinned Pi, simulated SSE and CPU-only; no paid calls, no GB10 or free pilot",
+  "gpu_calls": 0,
+  "paid_calls": 0,
+  "runtime": {
+    "pi_version": "1.5.2",
+    "pi_image": "efe1685cb8525c933297166615061df41d6735bc927cd6650c31354bb0afc41e",
+    "node_version": "24.13.0",
+    "package_lock_sha": "28f1bd388de4038dcdc606f03126d7cf2151245e4660dc36deb68dd28ff6c7b5",
+    "runner_sha": "c386d40a87a84ccbc9c3a05ea38067e36cd73b30b97cc2b97a7b488812848044",
+    "base_config_sha": "7de9bc952ae6f94511368cf767597eda6e85d7bade62c9fb345606eb927d3635"
+  },
+  "provider_diagnostics": {
+    "version": "max-lease-metadata-v3",
+    "provider_source_sha": "c1ccd79684bd88cc656f64d16e30fe363f078b6e9a35bd3187453eaf39e3cf2e"
+  },
+  "execution_protocol": {
+    "version": "p3-max-output-8192-v1",
+    "profile_sha": "9a1185c9bc933ed682a1a04f58d352e71b560f73c3606d7160b970eb105b79c3",
+    "limits": {
+      "input": 200000,
+      "output": 24000,
+      "turns": 28,
+      "wall_ms": 1200000,
+      "per_turn_output": 8192,
+      "request_bytes": 524288
+    },
+    "model": "deepseek-flash",
+    "thinking": "enabled",
+    "reasoning_effort": "max",
+    "modes": {
+      "B0": "fixed_train",
+      "B2": "evolving_train"
+    },
+    "node_ms": 800000,
+    "dev_calls": 4,
+    "job_reservation_ms": 200000,
+    "truncation": "generation_truncated",
+    "launcher_sha": "87485aaa762c018c37644381bcdc0d4b2e92f12bbe10092450df2ceb0c010c0e"
+  },
+  "fixture_sha": "9ba1e567bb9fcb3e1f09fca4acc4727615d373d90ea6ac24e6c5f7c5844f2a24",
+  "observations": {
+    "normal": {
+      "B0": {
+        "mode": "fixed_train",
+        "wire": [
+          {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max",
+            "max_tokens": 8192,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tools": [
+              "bash",
+              "edit",
+              "ee_rpc",
+              "read",
+              "write"
+            ]
+          },
+          {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max",
+            "max_tokens": 8192,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tools": [
+              "bash",
+              "edit",
+              "ee_rpc",
+              "read",
+              "write"
+            ]
+          },
+          {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max",
+            "max_tokens": 7616,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tools": [
+              "bash",
+              "edit",
+              "ee_rpc",
+              "read",
+              "write"
+            ]
+          }
+        ],
+        "settled_output": 24000,
+        "turns": [
+          {
+            "finish": "tool_calls",
+            "result": "complete",
+            "usage": "settled",
+            "reasoning_tokens": 8182,
+            "output_including_reasoning": 8192,
+            "request_meta": {
+              "request_bytes": 6532,
+              "input_left": 200000,
+              "output_left": 24000,
+              "input_bound": 6617,
+              "output_bound": 8192,
+              "requested_max_tokens": 8192,
+              "upstream_request_bytes": 6532,
+              "profile": "pinned_max",
+              "replay": {
+                "expected": 0,
+                "observed": 0,
+                "missing": 0,
+                "extra": 0,
+                "reasoning_mismatches": 0
+              },
+              "tool_result_count": 0,
+              "recent_tool_results": []
+            }
+          },
+          {
+            "finish": "tool_calls",
+            "result": "complete",
+            "usage": "settled",
+            "reasoning_tokens": 8182,
+            "output_including_reasoning": 8192,
+            "request_meta": {
+              "request_bytes": 6858,
+              "input_left": 199899,
+              "output_left": 15808,
+              "input_bound": 6943,
+              "output_bound": 8192,
+              "requested_max_tokens": 8192,
+              "upstream_request_bytes": 6858,
+              "profile": "pinned_max",
+              "replay": {
+                "expected": 1,
+                "observed": 1,
+                "missing": 0,
+                "extra": 0,
+                "reasoning_mismatches": 0
+              },
+              "tool_result_count": 1,
+              "recent_tool_results": [
+                {
+                  "kind": "ee_rpc",
+                  "text_utf8_bytes": 40
+                }
+              ]
+            }
+          },
+          {
+            "finish": "stop",
+            "result": "complete",
+            "usage": "settled",
+            "reasoning_tokens": 7606,
+            "output_including_reasoning": 7616,
+            "request_meta": {
+              "request_bytes": 7184,
+              "input_left": 199797,
+              "output_left": 7616,
+              "input_bound": 7269,
+              "output_bound": 7616,
+              "requested_max_tokens": 8192,
+              "upstream_request_bytes": 7184,
+              "profile": "pinned_max",
+              "replay": {
+                "expected": 2,
+                "observed": 2,
+                "missing": 0,
+                "extra": 0,
+                "reasoning_mismatches": 0
+              },
+              "tool_result_count": 2,
+              "recent_tool_results": [
+                {
+                  "kind": "ee_rpc",
+                  "text_utf8_bytes": 40
+                },
+                {
+                  "kind": "ee_rpc",
+                  "text_utf8_bytes": 40
+                }
+              ]
+            }
+          }
+        ],
+        "pi_status": "pi_session_complete",
+        "tool_events": [
+          {
+            "name": "ee_rpc",
+            "error": false
+          },
+          {
+            "name": "ee_rpc",
+            "error": false
+          }
+        ],
+        "trusted_events": [
+          {
+            "event_id": 1,
+            "operation": "facts",
+            "status": "ok",
+            "fact_sha": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          {
+            "event_id": 2,
+            "operation": "facts",
+            "status": "ok",
+            "fact_sha": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          }
+        ],
+        "isolated_state_removed": true
+      },
+      "B2": {
+        "mode": "evolving_train",
+        "wire": [
+          {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max",
+            "max_tokens": 8192,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tools": [
+              "bash",
+              "edit",
+              "ee_rpc",
+              "read",
+              "write"
+            ]
+          },
+          {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max",
+            "max_tokens": 8192,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tools": [
+              "bash",
+              "edit",
+              "ee_rpc",
+              "read",
+              "write"
+            ]
+          },
+          {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max",
+            "max_tokens": 7616,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tools": [
+              "bash",
+              "edit",
+              "ee_rpc",
+              "read",
+              "write"
+            ]
+          }
+        ],
+        "settled_output": 24000,
+        "turns": [
+          {
+            "finish": "tool_calls",
+            "result": "complete",
+            "usage": "settled",
+            "reasoning_tokens": 8182,
+            "output_including_reasoning": 8192,
+            "request_meta": {
+              "request_bytes": 6532,
+              "input_left": 200000,
+              "output_left": 24000,
+              "input_bound": 6617,
+              "output_bound": 8192,
+              "requested_max_tokens": 8192,
+              "upstream_request_bytes": 6532,
+              "profile": "pinned_max",
+              "replay": {
+                "expected": 0,
+                "observed": 0,
+                "missing": 0,
+                "extra": 0,
+                "reasoning_mismatches": 0
+              },
+              "tool_result_count": 0,
+              "recent_tool_results": []
+            }
+          },
+          {
+            "finish": "tool_calls",
+            "result": "complete",
+            "usage": "settled",
+            "reasoning_tokens": 8182,
+            "output_including_reasoning": 8192,
+            "request_meta": {
+              "request_bytes": 6858,
+              "input_left": 199899,
+              "output_left": 15808,
+              "input_bound": 6943,
+              "output_bound": 8192,
+              "requested_max_tokens": 8192,
+              "upstream_request_bytes": 6858,
+              "profile": "pinned_max",
+              "replay": {
+                "expected": 1,
+                "observed": 1,
+                "missing": 0,
+                "extra": 0,
+                "reasoning_mismatches": 0
+              },
+              "tool_result_count": 1,
+              "recent_tool_results": [
+                {
+                  "kind": "ee_rpc",
+                  "text_utf8_bytes": 40
+                }
+              ]
+            }
+          },
+          {
+            "finish": "stop",
+            "result": "complete",
+            "usage": "settled",
+            "reasoning_tokens": 7606,
+            "output_including_reasoning": 7616,
+            "request_meta": {
+              "request_bytes": 7184,
+              "input_left": 199797,
+              "output_left": 7616,
+              "input_bound": 7269,
+              "output_bound": 7616,
+              "requested_max_tokens": 8192,
+              "upstream_request_bytes": 7184,
+              "profile": "pinned_max",
+              "replay": {
+                "expected": 2,
+                "observed": 2,
+                "missing": 0,
+                "extra": 0,
+                "reasoning_mismatches": 0
+              },
+              "tool_result_count": 2,
+              "recent_tool_results": [
+                {
+                  "kind": "ee_rpc",
+                  "text_utf8_bytes": 40
+                },
+                {
+                  "kind": "ee_rpc",
+                  "text_utf8_bytes": 40
+                }
+              ]
+            }
+          }
+        ],
+        "pi_status": "pi_session_complete",
+        "tool_events": [
+          {
+            "name": "ee_rpc",
+            "error": false
+          },
+          {
+            "name": "ee_rpc",
+            "error": false
+          }
+        ],
+        "trusted_events": [
+          {
+            "event_id": 1,
+            "operation": "facts",
+            "status": "ok",
+            "fact_sha": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          {
+            "event_id": 2,
+            "operation": "facts",
+            "status": "ok",
+            "fact_sha": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          }
+        ],
+        "isolated_state_removed": true
+      }
+    },
+    "reasoning_only": {
+      "B0": {
+        "mode": "fixed_train",
+        "wire": [
+          {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max",
+            "max_tokens": 8192,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tools": [
+              "bash",
+              "edit",
+              "ee_rpc",
+              "read",
+              "write"
+            ]
+          }
+        ],
+        "settled_output": 8192,
+        "turns": [
+          {
+            "finish": "length",
+            "result": "generation_truncated",
+            "usage": "settled",
+            "reasoning_tokens": 8192,
+            "output_including_reasoning": 8192,
+            "request_meta": {
+              "request_bytes": 6532,
+              "input_left": 200000,
+              "output_left": 24000,
+              "input_bound": 6617,
+              "output_bound": 8192,
+              "requested_max_tokens": 8192,
+              "upstream_request_bytes": 6532,
+              "profile": "pinned_max",
+              "replay": {
+                "expected": 0,
+                "observed": 0,
+                "missing": 0,
+                "extra": 0,
+                "reasoning_mismatches": 0
+              },
+              "tool_result_count": 0,
+              "recent_tool_results": []
+            }
+          }
+        ],
+        "pi_status": "not_completed",
+        "tool_events": [],
+        "trusted_events": [],
+        "isolated_state_removed": true
+      },
+      "B2": {
+        "mode": "evolving_train",
+        "wire": [
+          {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max",
+            "max_tokens": 8192,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tools": [
+              "bash",
+              "edit",
+              "ee_rpc",
+              "read",
+              "write"
+            ]
+          }
+        ],
+        "settled_output": 8192,
+        "turns": [
+          {
+            "finish": "length",
+            "result": "generation_truncated",
+            "usage": "settled",
+            "reasoning_tokens": 8192,
+            "output_including_reasoning": 8192,
+            "request_meta": {
+              "request_bytes": 6532,
+              "input_left": 200000,
+              "output_left": 24000,
+              "input_bound": 6617,
+              "output_bound": 8192,
+              "requested_max_tokens": 8192,
+              "upstream_request_bytes": 6532,
+              "profile": "pinned_max",
+              "replay": {
+                "expected": 0,
+                "observed": 0,
+                "missing": 0,
+                "extra": 0,
+                "reasoning_mismatches": 0
+              },
+              "tool_result_count": 0,
+              "recent_tool_results": []
+            }
+          }
+        ],
+        "pi_status": "not_completed",
+        "tool_events": [],
+        "trusted_events": [],
+        "isolated_state_removed": true
+      }
+    },
+    "partial_tool": {
+      "B0": {
+        "mode": "fixed_train",
+        "wire": [
+          {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max",
+            "max_tokens": 8192,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tools": [
+              "bash",
+              "edit",
+              "ee_rpc",
+              "read",
+              "write"
+            ]
+          }
+        ],
+        "settled_output": 8192,
+        "turns": [
+          {
+            "finish": "length",
+            "result": "generation_truncated",
+            "usage": "settled",
+            "reasoning_tokens": 8182,
+            "output_including_reasoning": 8192,
+            "request_meta": {
+              "request_bytes": 6532,
+              "input_left": 200000,
+              "output_left": 24000,
+              "input_bound": 6617,
+              "output_bound": 8192,
+              "requested_max_tokens": 8192,
+              "upstream_request_bytes": 6532,
+              "profile": "pinned_max",
+              "replay": {
+                "expected": 0,
+                "observed": 0,
+                "missing": 0,
+                "extra": 0,
+                "reasoning_mismatches": 0
+              },
+              "tool_result_count": 0,
+              "recent_tool_results": []
+            }
+          }
+        ],
+        "pi_status": "not_completed",
+        "tool_events": [],
+        "trusted_events": [],
+        "isolated_state_removed": true
+      },
+      "B2": {
+        "mode": "evolving_train",
+        "wire": [
+          {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max",
+            "max_tokens": 8192,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tools": [
+              "bash",
+              "edit",
+              "ee_rpc",
+              "read",
+              "write"
+            ]
+          }
+        ],
+        "settled_output": 8192,
+        "turns": [
+          {
+            "finish": "length",
+            "result": "generation_truncated",
+            "usage": "settled",
+            "reasoning_tokens": 8182,
+            "output_including_reasoning": 8192,
+            "request_meta": {
+              "request_bytes": 6532,
+              "input_left": 200000,
+              "output_left": 24000,
+              "input_bound": 6617,
+              "output_bound": 8192,
+              "requested_max_tokens": 8192,
+              "upstream_request_bytes": 6532,
+              "profile": "pinned_max",
+              "replay": {
+                "expected": 0,
+                "observed": 0,
+                "missing": 0,
+                "extra": 0,
+                "reasoning_mismatches": 0
+              },
+              "tool_result_count": 0,
+              "recent_tool_results": []
+            }
+          }
+        ],
+        "pi_status": "not_completed",
+        "tool_events": [],
+        "trusted_events": [],
+        "isolated_state_removed": true
+      }
+    }
+  },
+  "launcher_truncation": {
+    "status": {
+      "agent_model": {
+        "effort": "max",
+        "fingerprint": "offline-cap-fixture",
+        "id": "deepseek-flash",
+        "name": "DeepSeek-V4.1-Flash",
+        "selection_use": "not model-selection evidence"
+      },
+      "error": "RuntimeError",
+      "execution_protocol": {
+        "dev_calls": 4,
+        "job_reservation_ms": 200000,
+        "launcher_sha": "87485aaa762c018c37644381bcdc0d4b2e92f12bbe10092450df2ceb0c010c0e",
+        "limits": {
+          "input": 200000,
+          "output": 24000,
+          "per_turn_output": 8192,
+          "request_bytes": 524288,
+          "turns": 28,
+          "wall_ms": 1200000
+        },
+        "model": "deepseek-flash",
+        "modes": {
+          "B0": "fixed_train",
+          "B2": "evolving_train"
+        },
+        "node_ms": 800000,
+        "profile_sha": "9a1185c9bc933ed682a1a04f58d352e71b560f73c3606d7160b970eb105b79c3",
+        "reasoning_effort": "max",
+        "thinking": "enabled",
+        "truncation": "generation_truncated",
+        "version": "p3-max-output-8192-v1"
+      },
+      "provider_diagnostics": {
+        "provider_source_sha": "c1ccd79684bd88cc656f64d16e30fe363f078b6e9a35bd3187453eaf39e3cf2e",
+        "version": "max-lease-metadata-v3"
+      },
+      "reason": "pilot did not settle; no automatic retry or continuation",
+      "stage": "S1_agent",
+      "status": "stopped",
+      "stop_class": "generation_truncated",
+      "w_started": false
+    },
+    "s1_status": "unsettled",
+    "s1_failure": "generation_truncated",
+    "s1_usage": {
+      "input": 101,
+      "output_including_reasoning": 8192
+    },
+    "s2_started": false,
+    "w": {
+      "status": "hold_requires_settled_uncensored_costs",
+      "w_started": false
+    }
+  }
+}

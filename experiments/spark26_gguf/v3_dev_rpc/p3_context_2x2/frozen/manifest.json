@@ -1,0 +1,159 @@
+{
+  "cells": [
+    {
+      "cell": "high-short",
+      "effort": "high",
+      "history": "history-short.json",
+      "max_tokens": 4000,
+      "order": 1,
+      "read_bytes": 8163,
+      "read_size": "short",
+      "request": "high-short.request.json",
+      "reservation": {
+        "local_candidate_bound": 2948,
+        "margin_tokens": 512,
+        "rendered_tokens": 2436
+      },
+      "tool_result": "read-short.json"
+    },
+    {
+      "cell": "max-long",
+      "effort": "max",
+      "history": "history-long.json",
+      "max_tokens": 4000,
+      "order": 2,
+      "read_bytes": 38532,
+      "read_size": "long",
+      "request": "max-long.request.json",
+      "reservation": {
+        "local_candidate_bound": 9625,
+        "margin_tokens": 875,
+        "rendered_tokens": 8750
+      },
+      "tool_result": "read-long.json"
+    },
+    {
+      "cell": "max-short",
+      "effort": "max",
+      "history": "history-short.json",
+      "max_tokens": 4000,
+      "order": 3,
+      "read_bytes": 8163,
+      "read_size": "short",
+      "request": "max-short.request.json",
+      "reservation": {
+        "local_candidate_bound": 2948,
+        "margin_tokens": 512,
+        "rendered_tokens": 2436
+      },
+      "tool_result": "read-short.json"
+    },
+    {
+      "cell": "high-long",
+      "effort": "high",
+      "history": "history-long.json",
+      "max_tokens": 4000,
+      "order": 4,
+      "read_bytes": 38532,
+      "read_size": "long",
+      "request": "high-long.request.json",
+      "reservation": {
+        "local_candidate_bound": 9625,
+        "margin_tokens": 875,
+        "rendered_tokens": 8750
+      },
+      "tool_result": "read-long.json"
+    }
+  ],
+  "common": {
+    "source": "toy-source.txt",
+    "system": "system.txt",
+    "task": "task.txt",
+    "tools": "tools.json"
+  },
+  "counter": {
+    "files": {
+      "encoding.py": "13231c592e958fb39e2af6001dae69d90e7a36b265702b9b390236fb387599e2",
+      "tokenizer.json": "c90dfa01249db1be4245780a052ede752e1361c612ac6d08e2bdada7d599476b"
+    },
+    "revision": "08c8657f02291e11b6f6b63e0e16014f8e748518",
+    "tokenizers": "0.22.1"
+  },
+  "expected_fingerprint": "bc19ba97cbe016479903222bb1578db6",
+  "fingerprint_evidence": "experiments/model_preflight/receipt-20261123-max-02.json",
+  "frozen_files": {
+    "high-long.request.json": {
+      "bytes": 40994,
+      "sha256": "5c60159bcfea66299cf1650ac6fd6026c8602cadd11195a14f01c2ab70b0d340"
+    },
+    "high-short.request.json": {
+      "bytes": 10196,
+      "sha256": "521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d"
+    },
+    "history-long.json": {
+      "bytes": 39438,
+      "sha256": "46eaffb243a28c355ccd541127ef436b1e4deb3ed439c35cd14f9b2af6ace1f3"
+    },
+    "history-short.json": {
+      "bytes": 8640,
+      "sha256": "863057dfb6c1dbe9ffb0682ed232362a97746644d8448dec6d16400846690f4a"
+    },
+    "max-long.request.json": {
+      "bytes": 40993,
+      "sha256": "dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a"
+    },
+    "max-short.request.json": {
+      "bytes": 10195,
+      "sha256": "219db6400bd1b94d2b9c6d5bd1b021efd6be955b72656a4cdf5905486ad1f7ca"
+    },
+    "read-long.json": {
+      "bytes": 38532,
+      "sha256": "caadba7d9fd00a6bc08cceb89270e9daeb126b2ccfcc7abc00bf5f239f5ae79c"
+    },
+    "read-short.json": {
+      "bytes": 8163,
+      "sha256": "f0465ec76032a6b2e619fa725b49dac582e6493aabdefef1bf21cabe7b8ec25e"
+    },
+    "system.txt": {
+      "bytes": 234,
+      "sha256": "1fa770b4595077b228bd8d0895acdf2d8e75d30a3d0cccdb3ef1c356ecdd449e"
+    },
+    "task.txt": {
+      "bytes": 378,
+      "sha256": "be9fc7cff3f08b055669a6e16f2c914728826b8421792a325cb55b0da833e85b"
+    },
+    "tools.json": {
+      "bytes": 686,
+      "sha256": "39a636e0d07ae36d661ef817ced970fd2feb192396b37ecacfe893118c3ed76f"
+    },
+    "toy-source.txt": {
+      "bytes": 37838,
+      "sha256": "a4e9b63463e5ac2a7a04a9f95e70c7398f1a0cf6d2896bf6871c6d5d069b0571"
+    }
+  },
+  "model": "deepseek-flash",
+  "plan": {
+    "frozen_input_reservations": 25146,
+    "hosted_usage_bound_attested": false,
+    "max_calls": 4,
+    "per_request_input_plan": 15000,
+    "per_request_max_tokens": 4000,
+    "retry": false,
+    "total_input_plan": 60000,
+    "total_output_plan": 16000
+  },
+  "repo_files": {
+    "evolveengine/v3_context_control.py": "c60f19fd75db3199a130a5eff7649acb572956fe09bad2b637fa23d205fa3ab8",
+    "evolveengine/v3_harness.py": "52009b23da41fe8aec8cc2ce3237cf1febf96651f78a512996f81c8b7a598f19",
+    "evolveengine/v3_provider.py": "052964cfc171755f663936bc7f2a5addb9bb0f26b68f397ae66e0fc920351a75",
+    "experiments/model_preflight/receipt-20261123-max-02.json": "401e14a506b1a636025c9b8702b6aa612c73b5e39a61ada1f572ee55b2fd8893",
+    "experiments/spark26_gguf/v3_dev_rpc/P3-CONTEXT-PREREG-20261123.md": "023c406e3f26a8f003a2f1bbbb90a99dbc1cbadbade4dfa7b8b90926383cd7d8"
+  },
+  "scope": "offline_frozen_not_live_authorized",
+  "scripts": {
+    "diagnostic.py": "5a51f057f9afa7ba1e91869d4f7f76a0036d2b67e048ad7dbd3efd826201b9b7",
+    "test_diagnostic.py": "bba5112a5b4df9168af6c0ed16c3d3b12bab310e7ce2dcab771a2259b904c20d"
+  },
+  "sent_paid_calls": 0,
+  "version": "p3-context-2x2-offline-freeze-v1-20261123"
+}

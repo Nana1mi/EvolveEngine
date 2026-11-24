@@ -1,0 +1,33 @@
+# SHA-256, raw file bytes. Paths relative to this directory unless noted.
+# The manifest SHA-256 must be compared with the separately delivered value.
+4259814224d61a4f13323b878736ce93483b023c4d33af0256f0103984d648f2  frozen/manifest.json
+
+# Frozen scripts and fixtures
+5a51f057f9afa7ba1e91869d4f7f76a0036d2b67e048ad7dbd3efd826201b9b7  diagnostic.py
+bba5112a5b4df9168af6c0ed16c3d3b12bab310e7ce2dcab771a2259b904c20d  test_diagnostic.py
+5c60159bcfea66299cf1650ac6fd6026c8602cadd11195a14f01c2ab70b0d340  frozen/high-long.request.json
+521a06ad615d79d964986eb75eb4a53ffc925c76d2c3d5db9d295af960eb778d  frozen/high-short.request.json
+46eaffb243a28c355ccd541127ef436b1e4deb3ed439c35cd14f9b2af6ace1f3  frozen/history-long.json
+863057dfb6c1dbe9ffb0682ed232362a97746644d8448dec6d16400846690f4a  frozen/history-short.json
+dcc9b085d32066365dfa9456e291cdd8e84a1f34ca228c46a31557acfcda5b3a  frozen/max-long.request.json
+219db6400bd1b94d2b9c6d5bd1b021efd6be955b72656a4cdf5905486ad1f7ca  frozen/max-short.request.json
+caadba7d9fd00a6bc08cceb89270e9daeb126b2ccfcc7abc00bf5f239f5ae79c  frozen/read-long.json
+f0465ec76032a6b2e619fa725b49dac582e6493aabdefef1bf21cabe7b8ec25e  frozen/read-short.json
+1fa770b4595077b228bd8d0895acdf2d8e75d30a3d0cccdb3ef1c356ecdd449e  frozen/system.txt
+be9fc7cff3f08b055669a6e16f2c914728826b8421792a325cb55b0da833e85b  frozen/task.txt
+39a636e0d07ae36d661ef817ced970fd2feb192396b37ecacfe893118c3ed76f  frozen/tools.json
+a4e9b63463e5ac2a7a04a9f95e70c7398f1a0cf6d2896bf6871c6d5d069b0571  frozen/toy-source.txt
+
+# Dependencies and prior evidence (read only)
+c60f19fd75db3199a130a5eff7649acb572956fe09bad2b637fa23d205fa3ab8  ../../../../evolveengine/v3_context_control.py
+52009b23da41fe8aec8cc2ce3237cf1febf96651f78a512996f81c8b7a598f19  ../../../../evolveengine/v3_harness.py
+052964cfc171755f663936bc7f2a5addb9bb0f26b68f397ae66e0fc920351a75  ../../../../evolveengine/v3_provider.py
+401e14a506b1a636025c9b8702b6aa612c73b5e39a61ada1f572ee55b2fd8893  ../../../../experiments/model_preflight/receipt-20261123-max-02.json
+023c406e3f26a8f003a2f1bbbb90a99dbc1cbadbade4dfa7b8b90926383cd7d8  ../../../../experiments/spark26_gguf/v3_dev_rpc/P3-CONTEXT-PREREG-20261123.md
+
+# External public tokenizer assets (paths relative to --assets)
+13231c592e958fb39e2af6001dae69d90e7a36b265702b9b390236fb387599e2  encoding.py
+c90dfa01249db1be4245780a052ede752e1361c612ac6d08e2bdada7d599476b  tokenizer.json
+
+# Post-freeze evidence (not part of the freeze root)
+0ee5edfd68a20d4424fa77f06ddfab7e6527554156ea1e9b1edb22d17e0461bb  offline-rehearsal.json

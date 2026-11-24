@@ -1,0 +1,174 @@
+{
+  "status": "complete",
+  "design": "v32-four-scene-lab-E0-vs-E0-r1",
+  "bundle_sha256": "636cbc782ef503630fae4b6c9f5c1171ce11bb26d59e9f0777f69a6fe7f57edc",
+  "boots": 6,
+  "times_HKT": [
+    "2026-11-23T16:42:59+08:00",
+    "2026-11-23T16:54:30+08:00"
+  ],
+  "warm_waves": 24,
+  "timed_waves": 72,
+  "timed_requests": 126,
+  "process_node_seconds": {
+    "a1": 115,
+    "b1": 115,
+    "b2": 115,
+    "a2": 116,
+    "a3": 115,
+    "b3": 115
+  },
+  "total_process_node_seconds": 691,
+  "end_to_end_node_seconds": 691,
+  "scheduler_capacity": {
+    "max_total_num_tokens": 16384,
+    "chunked_prefill_size": 8192,
+    "max_prefill_tokens": 16384,
+    "max_running_requests": 4,
+    "context_len": 8192
+  },
+  "kv_pools": {
+    "full": {
+      "dtype": "bfloat16",
+      "tokens": 16384
+    },
+    "swa": {
+      "dtype": "bfloat16",
+      "tokens": 16384
+    }
+  },
+  "scenes": {
+    "W1": {
+      "process_medians": {
+        "a1": 94.44100175512713,
+        "b1": 94.16403441263411,
+        "b2": 93.89342984292624,
+        "a2": 93.66841040661065,
+        "a3": 93.8814400216813,
+        "b3": 93.79951755847681
+      },
+      "value": 93.88743493230376,
+      "range": [
+        93.66841040661065,
+        94.44100175512713
+      ],
+      "pair_symmetric_pct": [
+        -0.29370089804671506,
+        0.2399415958131141,
+        -0.08729970718473476
+      ],
+      "max_abs_pair_pct": 0.29370089804671506,
+      "wave_s": 2.8087352340000002,
+      "wave_e2e_ms_slowest_median": 2809.2873074999998,
+      "timed_lane_distinct_hash_counts": [
+        1
+      ]
+    },
+    "W2": {
+      "process_medians": {
+        "a1": 92.53036944698583,
+        "b1": 92.24837211305491,
+        "b2": 92.02566896019246,
+        "a2": 91.96109724047456,
+        "a3": 92.25328454307223,
+        "b3": 92.16563965096859
+      },
+      "value": 92.20700588201174,
+      "range": [
+        91.96109724047456,
+        92.53036944698583
+      ],
+      "pair_symmetric_pct": [
+        -0.3052270315839194,
+        0.07019170025248236,
+        -0.09504978134610764
+      ],
+      "max_abs_pair_pct": 0.3052270315839194,
+      "wave_s": 3.3389866264999997,
+      "wave_e2e_ms_slowest_median": 3338.9866265,
+      "timed_lane_distinct_hash_counts": [
+        1
+      ]
+    },
+    "W3": {
+      "process_medians": {
+        "a1": 2273.745363,
+        "b1": 2277.457375,
+        "b2": 2296.507613,
+        "a2": 2289.817575,
+        "a3": 2303.154848,
+        "b3": 2305.509479
+      },
+      "value": 2293.1625940000004,
+      "range": [
+        2273.745363,
+        2305.509479
+      ],
+      "pair_symmetric_pct": [
+        -0.16312224322625177,
+        -0.2917384932714516,
+        -0.10218279453355159
+      ],
+      "max_abs_pair_pct": 0.2917384932714516,
+      "wave_s": 3.732503838,
+      "wave_e2e_ms_slowest_median": 3731.740706,
+      "timed_lane_distinct_hash_counts": [
+        1
+      ]
+    },
+    "W4": {
+      "process_medians": {
+        "a1": 114.26852466069694,
+        "b1": 114.01193406915382,
+        "b2": 113.73839318839032,
+        "a2": 114.49899913651832,
+        "a3": 113.50763951713549,
+        "b3": 113.44009866977241
+      },
+      "value": 113.87516362877207,
+      "range": [
+        113.44009866977241,
+        114.49899913651832
+      ],
+      "pair_symmetric_pct": [
+        -0.2248029401822498,
+        -0.6665042396254142,
+        -0.059521057934009435
+      ],
+      "max_abs_pair_pct": 0.6665042396254142,
+      "wave_s": 3.3741417675000003,
+      "wave_e2e_ms_slowest_median": 3372.040599,
+      "timed_lane_distinct_hash_counts": [
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "composite_B_over_A_minus_one_pct": [
+    -0.24640933555402145,
+    -0.16189680378080668,
+    -0.08597636021614619
+  ],
+  "verified_w4_timed_waves": 18,
+  "timed_per_lane_hash_distinct": {
+    "W1.0": 1,
+    "W2.0": 1,
+    "W3.0": 1,
+    "W4.0": 1,
+    "W4.1": 1,
+    "W4.2": 1,
+    "W4.3": 1
+  },
+  "all_phases_per_lane_hash_distinct": {
+    "W1.0": 1,
+    "W2.0": 1,
+    "W3.0": 1,
+    "W4.0": 1,
+    "W4.1": 1,
+    "W4.2": 1,
+    "W4.3": 1
+  },
+  "post_gpu": "name, driver_version, utilization.gpu [%]\nNVIDIA GB10, 580.178.04, 0 %"
+}

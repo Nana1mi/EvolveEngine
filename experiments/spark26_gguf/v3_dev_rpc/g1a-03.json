@@ -1,0 +1,497 @@
+{
+  "status": "pass_g1a_pre_pilot_scope",
+  "scope": "quality-only residence across stages, packed CUDA inventory and torch allocator, actual QKV BF16 mirror negative, no free Agent",
+  "bundle_sha": "35c72b53fe0c988d9016dd2c7df663dfdd2866526e7eaf705ab526e69cfadb7a",
+  "cases": {
+    "e0": {
+      "source_sha": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+      "archive": "C:\\Users\\rog\\AppData\\Local\\EvolveEngine\\spark26-v3-rpc.Uiy4zx",
+      "rc": 0,
+      "result": {
+        "node_ms": 97341,
+        "source_sha": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+        "engine": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+        "operation": "develop_quality",
+        "raw_sha": "38cdd20b6748d16c427696016f27aca3f06b2965bed60c348ef371996e86544c",
+        "observer_network": "container:b786c0cebd86052e764f59bef8513f44072fdaf2988f3e80d6cd483f4bcffe48",
+        "status": "valid",
+        "max_tv": 0.0,
+        "screen": {
+          "status": "within_dev_screen",
+          "n": 32,
+          "missing": [],
+          "tv_over_005": [],
+          "tv_over_002": [],
+          "large_margin_flips": []
+        },
+        "eos_passed": 4,
+        "mixed_passed": true,
+        "residency": {
+          "status": "within_observed_scope",
+          "packed_bytes": 1814261760,
+          "live_bytes": [
+            3201114624,
+            4175874560,
+            4175876608
+          ],
+          "scope": "Phase-bound model-owned tensor inventory and PyTorch CUDA allocator, not independent attestation of opaque/native state.",
+          "packed_weights": 141,
+          "surplus": [
+            44441879,
+            1019201815,
+            1019203863
+          ]
+        },
+        "runtime_fields": 46
+      }
+    },
+    "retained_qkv_bf16": {
+      "source_sha": "8986037c5b7b5a56f9b56ae0e99f685bee3eeac5b4b5d57c2b35e24bdf718d41",
+      "archive": "C:\\Users\\rog\\AppData\\Local\\EvolveEngine\\spark26-v3-rpc.6p53NY",
+      "rc": 0,
+      "result": {
+        "node_ms": 98363,
+        "source_sha": "8986037c5b7b5a56f9b56ae0e99f685bee3eeac5b4b5d57c2b35e24bdf718d41",
+        "engine": "8986037c5b7b5a56f9b56ae0e99f685bee3eeac5b4b5d57c2b35e24bdf718d41",
+        "operation": "develop_quality",
+        "raw_sha": "8dba95ef4f8453bf1200ca21e59aaaf90ae9e9d5c6886289a314432e822901da",
+        "observer_network": "container:004f7f5661ac7fc40b061a9816ebe7c8d547fb36b0c8cd69d5f9fdf257caacd2",
+        "status": "violation",
+        "max_tv": 0.0,
+        "screen": {
+          "status": "within_dev_screen",
+          "n": 32,
+          "missing": [],
+          "tv_over_005": [],
+          "tv_over_002": [],
+          "large_margin_flips": []
+        },
+        "eos_passed": 4,
+        "mixed_passed": true,
+        "residency": {
+          "status": "violation",
+          "packed_bytes": 1814261760,
+          "live_bytes": [
+            3201114624,
+            4528196096,
+            4528198144
+          ],
+          "scope": "Phase-bound model-owned tensor inventory and PyTorch CUDA allocator, not independent attestation of opaque/native state.",
+          "reason": "resident_weight_shaped_float_storage",
+          "extra_bytes": 352321536
+        },
+        "runtime_fields": 46
+      }
+    }
+  },
+  "missing_phase": "insufficient_evidence",
+  "common_runner": {
+    "session": {
+      "run": "8e57dfb10f68ae6d",
+      "image": "sha256:efe1685cb8525c933297166615061df41d6735bc927cd6650c31354bb0afc41e",
+      "pi": "1.5.2",
+      "node": "24.13.0",
+      "snapshot": "82366d227000b1ce9d2ee46cbe1891c1787b6ae7d20b2540db92b4e00dd182fc",
+      "isolation": {
+        "network": "none",
+        "read_only_root": true,
+        "user": "12345:12345",
+        "mount_writeable": {
+          "/gate": false,
+          "/input": false,
+          "/opt/ee/v3_guest.mjs": false,
+          "/opt/ee/v3_rpc.mjs": false
+        },
+        "gpu": false
+      },
+      "relay_events": 8,
+      "transport_fault": null,
+      "isolated_state_removed": true,
+      "socket_removed": true,
+      "unchanged_install": true,
+      "wall_ms": 220472,
+      "provider_rows": [
+        {
+          "turn": 1,
+          "model": "deepseek-flash",
+          "thinking": "enabled",
+          "effort": "max",
+          "upstream_sha": "297c061527d0dd9314fad062fca7a55009dcae381389cc8200ce8b3961e1b796",
+          "prior_tool_contexts": 0,
+          "toolset_sha": "359c9da9afc7b508dd7f2f8feedfec2d40b1a9aa47c5a952da768e727a5ace23",
+          "prompt_fragments": [],
+          "input_reserved": 2394,
+          "output_reserved": 1200,
+          "input_tokens": 60,
+          "output_including_reasoning": 12,
+          "reasoning_tokens": 5,
+          "finish": "tool_calls",
+          "usage": "settled",
+          "versions": [],
+          "response_models": [
+            "deepseek-flash"
+          ],
+          "reasoning_stream_seen": true,
+          "result": "complete",
+          "wall_ms": 1
+        },
+        {
+          "turn": 2,
+          "model": "deepseek-flash",
+          "thinking": "enabled",
+          "effort": "max",
+          "upstream_sha": "0f28122f4896d555aeb9d032264c647272e0f5f1d333f8cd8479203a0978e86d",
+          "prior_tool_contexts": 1,
+          "toolset_sha": "359c9da9afc7b508dd7f2f8feedfec2d40b1a9aa47c5a952da768e727a5ace23",
+          "prompt_fragments": [],
+          "input_reserved": 45390,
+          "output_reserved": 1200,
+          "input_tokens": 60,
+          "output_including_reasoning": 12,
+          "reasoning_tokens": 5,
+          "finish": "tool_calls",
+          "usage": "settled",
+          "versions": [],
+          "response_models": [
+            "deepseek-flash"
+          ],
+          "reasoning_stream_seen": true,
+          "result": "complete",
+          "wall_ms": 0
+        },
+        {
+          "turn": 3,
+          "model": "deepseek-flash",
+          "thinking": "enabled",
+          "effort": "max",
+          "upstream_sha": "6bcba02c581dd34750eb4f818c181aaa52e6f7fe8cc80713c81d23c828e5c5fa",
+          "prior_tool_contexts": 2,
+          "toolset_sha": "359c9da9afc7b508dd7f2f8feedfec2d40b1a9aa47c5a952da768e727a5ace23",
+          "prompt_fragments": [],
+          "input_reserved": 46083,
+          "output_reserved": 1200,
+          "input_tokens": 60,
+          "output_including_reasoning": 12,
+          "reasoning_tokens": 5,
+          "finish": "tool_calls",
+          "usage": "settled",
+          "versions": [],
+          "response_models": [
+            "deepseek-flash"
+          ],
+          "reasoning_stream_seen": true,
+          "result": "complete",
+          "wall_ms": 0
+        },
+        {
+          "turn": 4,
+          "model": "deepseek-flash",
+          "thinking": "enabled",
+          "effort": "max",
+          "upstream_sha": "e7bf619ee63ab5a36aa829f2a773d5d9af3ac84ecc6fa8630275aaeebaee509d",
+          "prior_tool_contexts": 3,
+          "toolset_sha": "359c9da9afc7b508dd7f2f8feedfec2d40b1a9aa47c5a952da768e727a5ace23",
+          "prompt_fragments": [],
+          "input_reserved": 47122,
+          "output_reserved": 1200,
+          "input_tokens": 60,
+          "output_including_reasoning": 12,
+          "reasoning_tokens": 5,
+          "finish": "tool_calls",
+          "usage": "settled",
+          "versions": [],
+          "response_models": [
+            "deepseek-flash"
+          ],
+          "reasoning_stream_seen": true,
+          "result": "complete",
+          "wall_ms": 0
+        },
+        {
+          "turn": 5,
+          "model": "deepseek-flash",
+          "thinking": "enabled",
+          "effort": "max",
+          "upstream_sha": "c1c854cec3ee9af8c8ed560b125de62d2179d6fcaf209b3a72d747d886e01c23",
+          "prior_tool_contexts": 4,
+          "toolset_sha": "359c9da9afc7b508dd7f2f8feedfec2d40b1a9aa47c5a952da768e727a5ace23",
+          "prompt_fragments": [],
+          "input_reserved": 47642,
+          "output_reserved": 1200,
+          "input_tokens": 60,
+          "output_including_reasoning": 12,
+          "reasoning_tokens": 5,
+          "finish": "stop",
+          "usage": "settled",
+          "versions": [],
+          "response_models": [
+            "deepseek-flash"
+          ],
+          "reasoning_stream_seen": true,
+          "result": "complete",
+          "wall_ms": 0
+        }
+      ],
+      "gateway_events": [],
+      "timed_out": false,
+      "pi_tool_executions": [
+        {
+          "name": "write",
+          "error": false
+        },
+        {
+          "name": "ee_rpc",
+          "error": false
+        },
+        {
+          "name": "ee_rpc",
+          "error": false
+        },
+        {
+          "name": "ee_rpc",
+          "error": false
+        }
+      ],
+      "pi_errors": 0,
+      "pi_exit": 0,
+      "status": "pi_session_complete"
+    },
+    "status": "pass_integrated_dev_scope",
+    "worker": [
+      {
+        "operation": "develop_quality",
+        "source_identity": "7a450b533860b328ca4d713309d256736a992311fed5712910c3523249cbc5bc",
+        "archive": "C:\\Users\\rog\\AppData\\Local\\EvolveEngine\\spark26-v3-rpc.ifvprp",
+        "rc": 0,
+        "result": {
+          "node_ms": 97352,
+          "source_sha": "a5c3e5157bb8cfba8a5db700c21ac7ce226146648c676f3d30680e31d57c4b0b",
+          "engine": "7a450b533860b328ca4d713309d256736a992311fed5712910c3523249cbc5bc",
+          "operation": "develop_quality",
+          "raw_sha": "bf47785f52d4fe91448c756fe24eaffaa73ee75395756016045cfe4556a0fb1a",
+          "observer_network": "container:21a1fae920691ac127bad5626b80f47476df5bfa9134d91443834695f9b56888",
+          "status": "valid",
+          "max_tv": 0.0,
+          "screen": {
+            "status": "within_dev_screen",
+            "n": 32,
+            "missing": [],
+            "tv_over_005": [],
+            "tv_over_002": [],
+            "large_margin_flips": []
+          },
+          "eos_passed": 4,
+          "mixed_passed": true,
+          "residency": {
+            "status": "within_observed_scope",
+            "packed_bytes": 1814261760,
+            "live_bytes": [
+              3201114624,
+              4175874560,
+              4175876608
+            ],
+            "scope": "Phase-bound model-owned tensor inventory and PyTorch CUDA allocator, not independent attestation of opaque/native state.",
+            "packed_weights": 141,
+            "surplus": [
+              44441879,
+              1019201815,
+              1019203863
+            ]
+          },
+          "runtime_fields": 46
+        }
+      },
+      {
+        "operation": "develop_measure",
+        "source_identity": "7a450b533860b328ca4d713309d256736a992311fed5712910c3523249cbc5bc",
+        "archive": "C:\\Users\\rog\\AppData\\Local\\EvolveEngine\\spark26-v3-rpc.NIInrt",
+        "rc": 0,
+        "result": {
+          "node_ms": 114598,
+          "source_sha": "a5c3e5157bb8cfba8a5db700c21ac7ce226146648c676f3d30680e31d57c4b0b",
+          "engine": "7a450b533860b328ca4d713309d256736a992311fed5712910c3523249cbc5bc",
+          "operation": "develop_measure",
+          "raw_sha": "d7099e9f52aa1ee2becf737de54e2079e4bc0e1f5caa4553318d0577cc37316b",
+          "observer_network": "container:54e7f8ab0e4af23e8351c4a21ffccaeecbcfc0402e4c3519d6fa95e8b8bc47cd",
+          "status": "observed",
+          "scenes": {
+            "W1": {
+              "score": 98.11518219222543,
+              "median_wave_s": 2.6887469470000003,
+              "timed": 2
+            },
+            "W2": {
+              "score": 96.04809854687649,
+              "median_wave_s": 3.2246931135,
+              "timed": 2
+            },
+            "W3": {
+              "score": 0.43872643984357407,
+              "median_wave_s": 3.659458257,
+              "timed": 2
+            },
+            "W4": {
+              "score": 114.12981715596965,
+              "median_wave_s": 3.3645938495,
+              "timed": 2
+            }
+          },
+          "scheduler_widths": [
+            1,
+            4
+          ],
+          "interpretation": "single development sample; no comparison or delivery decision",
+          "runtime_fields": 46
+        }
+      }
+    ],
+    "external_policy": [
+      {
+        "event_id": 1,
+        "operation": "develop_quality",
+        "status": "valid",
+        "engine": "7a450b533860b328ca4d713309d256736a992311fed5712910c3523249cbc5bc",
+        "node_ms_charged": 97352,
+        "receipt_id": "bf47785f52d4fe91448c756fe24eaffaa73ee75395756016045cfe4556a0fb1a"
+      },
+      {
+        "event_id": 2,
+        "operation": "develop_measure",
+        "status": "observed",
+        "engine": "7a450b533860b328ca4d713309d256736a992311fed5712910c3523249cbc5bc",
+        "node_ms_charged": 114598,
+        "receipt_id": "d7099e9f52aa1ee2becf737de54e2079e4bc0e1f5caa4553318d0577cc37316b"
+      },
+      {
+        "event_id": 3,
+        "operation": "deliver_engine",
+        "status": "selected_by_agent",
+        "engine": "7a450b533860b328ca4d713309d256736a992311fed5712910c3523249cbc5bc",
+        "receipt_id": "bf47785f52d4fe91448c756fe24eaffaa73ee75395756016045cfe4556a0fb1a"
+      }
+    ],
+    "spent_node_ms": 211950,
+    "model_rows": [
+      {
+        "turn": 1,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "297c061527d0dd9314fad062fca7a55009dcae381389cc8200ce8b3961e1b796",
+        "prior_tool_contexts": 0,
+        "toolset_sha": "359c9da9afc7b508dd7f2f8feedfec2d40b1a9aa47c5a952da768e727a5ace23",
+        "prompt_fragments": [],
+        "input_reserved": 2394,
+        "output_reserved": 1200,
+        "input_tokens": 60,
+        "output_including_reasoning": 12,
+        "reasoning_tokens": 5,
+        "finish": "tool_calls",
+        "usage": "settled",
+        "versions": [],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 1
+      },
+      {
+        "turn": 2,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "0f28122f4896d555aeb9d032264c647272e0f5f1d333f8cd8479203a0978e86d",
+        "prior_tool_contexts": 1,
+        "toolset_sha": "359c9da9afc7b508dd7f2f8feedfec2d40b1a9aa47c5a952da768e727a5ace23",
+        "prompt_fragments": [],
+        "input_reserved": 45390,
+        "output_reserved": 1200,
+        "input_tokens": 60,
+        "output_including_reasoning": 12,
+        "reasoning_tokens": 5,
+        "finish": "tool_calls",
+        "usage": "settled",
+        "versions": [],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 0
+      },
+      {
+        "turn": 3,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "6bcba02c581dd34750eb4f818c181aaa52e6f7fe8cc80713c81d23c828e5c5fa",
+        "prior_tool_contexts": 2,
+        "toolset_sha": "359c9da9afc7b508dd7f2f8feedfec2d40b1a9aa47c5a952da768e727a5ace23",
+        "prompt_fragments": [],
+        "input_reserved": 46083,
+        "output_reserved": 1200,
+        "input_tokens": 60,
+        "output_including_reasoning": 12,
+        "reasoning_tokens": 5,
+        "finish": "tool_calls",
+        "usage": "settled",
+        "versions": [],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 0
+      },
+      {
+        "turn": 4,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "e7bf619ee63ab5a36aa829f2a773d5d9af3ac84ecc6fa8630275aaeebaee509d",
+        "prior_tool_contexts": 3,
+        "toolset_sha": "359c9da9afc7b508dd7f2f8feedfec2d40b1a9aa47c5a952da768e727a5ace23",
+        "prompt_fragments": [],
+        "input_reserved": 47122,
+        "output_reserved": 1200,
+        "input_tokens": 60,
+        "output_including_reasoning": 12,
+        "reasoning_tokens": 5,
+        "finish": "tool_calls",
+        "usage": "settled",
+        "versions": [],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 0
+      },
+      {
+        "turn": 5,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "effort": "max",
+        "upstream_sha": "c1c854cec3ee9af8c8ed560b125de62d2179d6fcaf209b3a72d747d886e01c23",
+        "prior_tool_contexts": 4,
+        "toolset_sha": "359c9da9afc7b508dd7f2f8feedfec2d40b1a9aa47c5a952da768e727a5ace23",
+        "prompt_fragments": [],
+        "input_reserved": 47642,
+        "output_reserved": 1200,
+        "input_tokens": 60,
+        "output_including_reasoning": 12,
+        "reasoning_tokens": 5,
+        "finish": "stop",
+        "usage": "settled",
+        "versions": [],
+        "response_models": [
+          "deepseek-flash"
+        ],
+        "reasoning_stream_seen": true,
+        "result": "complete",
+        "wall_ms": 0
+      }
+    ]
+  }
+}

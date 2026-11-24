@@ -1,0 +1,24 @@
+# Offline diagnostic image: base identity and input hashes are enforced by build_e0.sh.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE} AS build
+WORKDIR /build
+COPY sglang.tar.gz SHA256SUMS apply_overlay.py spark2_5_gguf.py ./
+COPY wheels/ ./wheels/
+RUN sha256sum -c SHA256SUMS && mkdir -p /patched \
+    && tar -xzf sglang.tar.gz --strip-components=1 -C /patched \
+    && python apply_overlay.py /patched \
+    && python -m pip --disable-pip-version-check install --no-cache-dir --no-index --no-deps \
+       --target /opt/spark26-deps wheels/*.whl
+
+FROM ${BASE_IMAGE}
+ARG BASE_ID
+LABEL org.opencontainers.image.revision="b2ce7f8811bc40fd0d67000030c22edbbe0f2a37" \
+      ai.evolveengine.base-id="${BASE_ID}" ai.evolveengine.scope="diagnostic-e0"
+COPY --from=build /patched/python /patched/python
+COPY --from=build /opt/spark26-deps /opt/spark26-deps
+COPY SHA256SUMS e0_entry.sh e0_probe.py /opt/spark26/
+ENV PYTHONPATH=/patched/python:/opt/spark26-deps \
+    PYTHONNOUSERSITE=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+    XDG_CACHE_HOME=/tmp/spark26-cache TRITON_CACHE_DIR=/tmp/spark26-cache/triton
+WORKDIR /opt/spark26
+ENTRYPOINT ["bash", "/opt/spark26/e0_entry.sh"]

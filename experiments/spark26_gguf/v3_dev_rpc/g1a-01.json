@@ -1,0 +1,13 @@
+{
+  "status": "not_passed",
+  "scope": "quality-only residence across stages, packed CUDA inventory and torch allocator, actual QKV BF16 mirror negative, no free Agent",
+  "bundle_sha": "4ee28cee25489fa99b505c0fb809721cfca127afa5fb53bbe2ebeb98903648a3",
+  "cases": {
+    "e0": {
+      "source_sha": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+      "archive": "C:\\Users\\rog\\AppData\\Local\\EvolveEngine\\spark26-v3-rpc.qN2z2Y",
+      "rc": 7
+    }
+  },
+  "failure": "ValueError: worker failed to collect complete evidence"
+}

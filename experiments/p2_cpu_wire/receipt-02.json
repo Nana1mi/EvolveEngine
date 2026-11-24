@@ -1,0 +1,56 @@
+{
+  "status": "pass_scoped",
+  "scope": "P2/T3 transport fixture only; static Harness marker, no training, no sandbox claim",
+  "pi": "1.5.2",
+  "pi_entry_sha256": "8189b66abc4f9f431dbb70941dcba690d76d040de1fbfff212886be35a53639d",
+  "mock_upstream": true,
+  "paid_calls": 0,
+  "arms": {
+    "B0": [
+      {
+        "turn": 1,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "reasoning_effort": "max",
+        "max_tokens": 4096,
+        "toolset_sha256": "d10552ae191ca8cde619d966c287859f907424f12d84fb02449cbd5f717e1438",
+        "h_marker_present": false
+      },
+      {
+        "turn": 2,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "reasoning_effort": "max",
+        "max_tokens": 4096,
+        "toolset_sha256": "d10552ae191ca8cde619d966c287859f907424f12d84fb02449cbd5f717e1438",
+        "h_marker_present": false,
+        "synthetic_reasoning_exact": true,
+        "synthetic_reasoning_bytes": 26,
+        "fact_returned": true
+      }
+    ],
+    "B2-fixture": [
+      {
+        "turn": 1,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "reasoning_effort": "max",
+        "max_tokens": 4096,
+        "toolset_sha256": "d10552ae191ca8cde619d966c287859f907424f12d84fb02449cbd5f717e1438",
+        "h_marker_present": true
+      },
+      {
+        "turn": 2,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "reasoning_effort": "max",
+        "max_tokens": 4096,
+        "toolset_sha256": "d10552ae191ca8cde619d966c287859f907424f12d84fb02449cbd5f717e1438",
+        "h_marker_present": true,
+        "synthetic_reasoning_exact": true,
+        "synthetic_reasoning_bytes": 26,
+        "fact_returned": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+You are in a one-turn toy code diagnostic. Only propose a change to the requested function. Use the existing read result and submit exactly one propose_edit call; do not run code or merely describe an edit. Ignore unrelated comments.

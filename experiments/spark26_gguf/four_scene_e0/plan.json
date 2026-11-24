@@ -1,0 +1,8 @@
+{
+  "design": "v32-four-scene-lab-E0-vs-E0-r1", "image": "sha256:28e47ed30260eaaab0fee0251b53018766afc2dc61e1c8e4c65be4b1e6d088ff", "weight": "d1df86f9332b75424ab3f7e14fdc2cf20aec93fa1e4a86393bb4e75057f24180", "gguf_py": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+  "context_length":8192, "max_total_tokens":16384, "max_running_requests":4, "warm_waves":1, "timed_waves":3,
+  "scenes":{"W1":[[128,256]],"W2":[[1024,256]],"W3":[[4096,128]],"W4":[[128,96],[512,96],[1024,96],[2048,96]]},
+  "pairs":[[["a1","b1"],["W1","W2","W3","W4"]],[["b2","a2"],["W4","W3","W2","W1"]],[["a3","b3"],["W2","W4","W1","W3"]]],
+  "endpoints":{"W1":"(N-1)/(last-first)","W2":"(N-1)/(last-first)","W3":"1/median_client_ttft_seconds; display TTFT ms","W4":"sum(actual_output_tokens)/(last_DONE-first_send); burst of four separate HTTP streams, require four active in native decode log per wave"},
+  "analysis":"Per process median of 3 timed waves by scene. Equal process weight for descriptive levels. Pair symmetric percent = 200*(B-A)/(B+A) on higher-is-better endpoints; report all pairs, max absolute, no significance test. Underlength, termination mismatch, missing stream, unresolved token boundaries or unverified active width invalidates measurement. Record hashes/variability; token repeatability not a production quality gate. All 4 scenes weighted equally; A and B both E0. No adaptive extra trials."
+}

@@ -1,0 +1,64 @@
+{
+  "status": "pass_scoped",
+  "scope": "P2/T3 transport fixture only; static Harness marker, no training, no sandbox claim",
+  "pi": "1.5.2",
+  "pi_entry_sha256": "8189b66abc4f9f431dbb70941dcba690d76d040de1fbfff212886be35a53639d",
+  "mock_upstream": true,
+  "paid_calls": 0,
+  "arms": {
+    "B0": [
+      {
+        "turn": 1,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "reasoning_effort": "max",
+        "max_tokens": 4096,
+        "toolset_sha256": "d10552ae191ca8cde619d966c287859f907424f12d84fb02449cbd5f717e1438",
+        "h_marker_present": false,
+        "common_system_sha256": "41f3db77b4e97e9787dd162e4fecc35ef459ae4880b72c687fe1ecc33b4e6f5c",
+        "user_messages_sha256": "c3fc1a2883ee1ef46de4040122159f3a2b1c612192372d597ab4cb8a3decf3f8"
+      },
+      {
+        "turn": 2,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "reasoning_effort": "max",
+        "max_tokens": 4096,
+        "toolset_sha256": "d10552ae191ca8cde619d966c287859f907424f12d84fb02449cbd5f717e1438",
+        "h_marker_present": false,
+        "common_system_sha256": "41f3db77b4e97e9787dd162e4fecc35ef459ae4880b72c687fe1ecc33b4e6f5c",
+        "user_messages_sha256": "c3fc1a2883ee1ef46de4040122159f3a2b1c612192372d597ab4cb8a3decf3f8",
+        "synthetic_reasoning_exact": true,
+        "synthetic_reasoning_bytes": 26,
+        "fact_returned": true
+      }
+    ],
+    "B2-fixture": [
+      {
+        "turn": 1,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "reasoning_effort": "max",
+        "max_tokens": 4096,
+        "toolset_sha256": "d10552ae191ca8cde619d966c287859f907424f12d84fb02449cbd5f717e1438",
+        "h_marker_present": true,
+        "common_system_sha256": "41f3db77b4e97e9787dd162e4fecc35ef459ae4880b72c687fe1ecc33b4e6f5c",
+        "user_messages_sha256": "c3fc1a2883ee1ef46de4040122159f3a2b1c612192372d597ab4cb8a3decf3f8"
+      },
+      {
+        "turn": 2,
+        "model": "deepseek-flash",
+        "thinking": "enabled",
+        "reasoning_effort": "max",
+        "max_tokens": 4096,
+        "toolset_sha256": "d10552ae191ca8cde619d966c287859f907424f12d84fb02449cbd5f717e1438",
+        "h_marker_present": true,
+        "common_system_sha256": "41f3db77b4e97e9787dd162e4fecc35ef459ae4880b72c687fe1ecc33b4e6f5c",
+        "user_messages_sha256": "c3fc1a2883ee1ef46de4040122159f3a2b1c612192372d597ab4cb8a3decf3f8",
+        "synthetic_reasoning_exact": true,
+        "synthetic_reasoning_bytes": 26,
+        "fact_returned": true
+      }
+    ]
+  }
+}

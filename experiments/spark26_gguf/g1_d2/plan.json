@@ -1,0 +1,24 @@
+{
+  "image": "sha256:28e47ed30260eaaab0fee0251b53018766afc2dc61e1c8e4c65be4b1e6d088ff",
+  "weight": "d1df86f9332b75424ab3f7e14fdc2cf20aec93fa1e4a86393bb4e75057f24180",
+  "gguf_py": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+  "context_length": 8192,
+  "max_total_tokens": 16384,
+  "max_running_requests": 4,
+  "qkv": "a5c3e5157bb8cfba8a5db700c21ac7ce226146648c676f3d30680e31d57c4b0b",
+  "labels": [
+    "e0a",
+    "e0b",
+    "b",
+    "c",
+    "d"
+  ],
+  "kind": "G1-D2",
+  "source": {
+    "e0a": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+    "e0b": "4d3f9f42cd531e4e3c0542106a91081f6fddd7396971013a413722970cf851ec",
+    "b": "23d0cde1a4028be555828a0bcfc6cf7df3a33e6681a6db5d4fc5f11c619dfe94",
+    "c": "249fef69e64691070ac8ee39364c76dec03e8d55f25dfac69704aa49e6ea08f6",
+    "d": "854a3bbf02caa3e8c90cd2608f919b18a8e3a3f7a85ae8ab4564175a12472057"
+  }
+}

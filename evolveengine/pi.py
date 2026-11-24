@@ -36,7 +36,7 @@ class PiAgent:
             raise ValueError("Installed Pi does not match the locked version")
         return {"pi": self.version, "provider": self.provider.preflight()}
 
-    def session(self, cwd, prompt, broker, *, editing=None, read_scope=()):
+    def session(self, cwd, prompt, broker, *, editing=None, read_scope=(), confined_guard=None):
         with tempfile.TemporaryDirectory(prefix="evolve-pi-") as private:
             agent_dir = Path(private)
             ready = agent_dir / "guard.ready"
@@ -67,11 +67,12 @@ class PiAgent:
                 args.append("--no-tools")
             else:
                 broker.ready = ready
-                compile_command = "python3 -I -m compileall -q python/minisgl" if os.name != "nt" else None
-                env["EVOLVE_PI_GUARD"] = canonical({"root": str(cwd), "edit": editing, "read": read_scope,
-                                                  "ready": str(ready), "compile": compile_command})
-                args.extend(["-e", str(Path(__file__).with_name("pi_guard.ts")),
-                             "--tools", "read,edit,bash" if compile_command else "read,edit"])
+                extension, extras = confined_guard or (Path(__file__).with_name("pi_guard.ts"), {})
+                compile_command = ("python3 -I -m compileall -q python/minisgl"
+                                   if os.name != "nt" and confined_guard is None else None)
+                env["EVOLVE_PI_GUARD"] = canonical({**extras, "root": str(cwd), "edit": editing,
+                                                  "read": read_scope, "ready": str(ready), "compile": compile_command})
+                args.extend(["-e", str(extension), "--tools", "read,edit,bash" if compile_command else "read,edit"])
             if broker.deadline <= time.monotonic():
                 raise subprocess.TimeoutExpired("Pi", 0)
             payload = prompt.encode("utf-8")
