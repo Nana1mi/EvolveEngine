@@ -1,0 +1,31 @@
+{
+  "model": {
+    "id": "deepseek-flash",
+    "thinking": "enabled",
+    "reasoning_effort": "max",
+    "context_window": 1000000,
+    "max_output_tokens": 393216
+  },
+  "budget": {
+    "input_tokens": 20000000,
+    "output_tokens": 5000000,
+    "model_requests": 1000,
+    "wall_seconds": 43200,
+    "gpu_node_seconds": 43200,
+    "development_calls": 200,
+    "gpu_operation_seconds": 360,
+    "api_cost_rmb": "80.00"
+  },
+  "transport": {
+    "request_bytes": 16777216,
+    "upstream_idle_seconds": 1800,
+    "relay_socket_idle_seconds": 900
+  },
+  "accounting": {
+    "record_all_costs": true
+  },
+  "termination": {
+    "stop_on_agent_delivery": true,
+    "max_truncation_recoveries": 1
+  }
+}

@@ -23,6 +23,8 @@ from .v3_provider import LeaseError
 HERE=Path(__file__).resolve().parent
 MAX_FRAME=768*1024
 MAX_REPLY=4*1024*1024
+LONG_MODEL_REQUEST=16*1024*1024
+LONG_MODEL_OUTPUT=393216
 RUNNER_FILES=(HERE/'v3_guest.mjs',HERE/'v3_rpc.mjs',HERE/'v3_relay.py',HERE/'v3_paged_read.mjs',Path(__file__))
 IMAGE=re.compile(r'sha256:[0-9a-f]{64}\Z')
 
@@ -46,18 +48,26 @@ def launch(name):
 
 
 class Gateway:
-    def __init__(self,provider,handler,token=None):
+    def __init__(self,provider,handler,token=None,*,delivery_complete=None):
         self.provider=provider;self.handler=handler;self.token=token or secrets.token_urlsafe(26)
         self.events=[]
+        self.delivery_complete=delivery_complete
 
     def dispatch(self,path,raw,auth):
         if path=='/v1/chat/completions':
             if not isinstance(auth,str) or not hmac.compare_digest(auth,'Bearer '+self.token):
                 self.events.append(dict(kind='denied',route='provider'));return 403,'application/json',b'{"denied":true}'
+            if self.delivery_complete and self.delivery_complete():
+                self.events.append(dict(kind='stopped',route='provider',reason='agent_delivered'))
+                terminal = dict(model='deepseek-flash', choices=[dict(index=0,delta={},finish_reason='stop')])
+                return 200,'text/event-stream',b'data: '+canonical(terminal)+b'\n\ndata: [DONE]\n\n'
             try:return 200,'text/event-stream',self.provider.exchange(raw)
             except (ValueError,LeaseError):
                 self.events.append(dict(kind='denied',route='provider_protocol_or_budget'));return 400,'application/json',b'{"error":"model request unavailable"}'
         if re.fullmatch(r'/rpc/[a-z_]{1,40}',path):
+            if self.delivery_complete and self.delivery_complete():
+                self.events.append(dict(kind='stopped',route='tool',reason='agent_delivered'))
+                return 409,'application/json',b'{"error":"agent already delivered"}'
             try:
                 data=json.loads(raw);need(type(data) is dict,'RPC requires an object')
                 status, result=self.handler(path[5:],data)
@@ -69,10 +79,25 @@ class Gateway:
 
 class Relay:
     """Bounded sequence-numbered stdio transport; sidecar gets no host network or keys."""
-    def __init__(self,bridge_name,image,volume,dispatch):
-        self.ready=Event();self.dispatch=dispatch;self.error=None;self.count=0
+    def __init__(self,bridge_name,image,volume,gateway):
+        self.ready=Event();self.dispatch=gateway.dispatch;self.error=None;self.count=0
+        limits = getattr(gateway.provider, 'limits', None)
+        self.frame_limit = MAX_FRAME
+        self.model_reply_limit = MAX_REPLY
+        self.binary_replies = False
+        self.model_socket_idle_seconds = getattr(gateway.provider, 'model_socket_idle_seconds', 390)
+        need(type(self.model_socket_idle_seconds) is int and 1 <= self.model_socket_idle_seconds <= 1800,
+             'invalid model socket idle timeout')
+        relay_options = []
+        if limits is not None and (limits.per_turn_output > 8192 or hasattr(gateway.provider, 'model_socket_idle_seconds')):
+            need(limits.per_turn_output <= LONG_MODEL_OUTPUT and limits.request_bytes <= LONG_MODEL_REQUEST,
+                 'unsupported long model relay caps')
+            self.frame_limit = max(MAX_FRAME, 4*((limits.request_bytes+2)//3)+4096)
+            self.model_reply_limit = gateway.provider.sse_byte_limit(limits.per_turn_output)
+            self.binary_replies = True
+            relay_options = [str(limits.request_bytes), str(self.model_reply_limit), str(self.model_socket_idle_seconds)]
         args=['docker','run','--rm','-i',*launch(bridge_name),'--read-only','--mount',ro(volume,'/gate','volume',True),
-              '--mount',ro(HERE/'v3_relay.py','/opt/relay.py'),image,'python','-B','-u','/opt/relay.py']
+              '--mount',ro(HERE/'v3_relay.py','/opt/relay.py'),image,'python','-B','-u','/opt/relay.py',*relay_options]
         self.err=tempfile.TemporaryFile();self.proc=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.err)
         self.thread=Thread(target=self._serve,daemon=True);self.thread.start()
 
@@ -80,14 +105,22 @@ class Relay:
         try:
             need(json.loads(self.proc.stdout.readline(4096))=={'ready':True},'relay failed startup')
             self.ready.set()
-            while line:=self.proc.stdout.readline(MAX_FRAME+1):
-                need(line.endswith(b'\n') and len(line)<=MAX_FRAME,'oversize relay frame')
+            while line:=self.proc.stdout.readline(self.frame_limit+1):
+                need(line.endswith(b'\n') and len(line)<=self.frame_limit,'oversize relay frame')
                 f=json.loads(line);need(set(f)=={'id','path','body','auth'} and type(f['id']) is int and f['id']==self.count+1,'invalid relay envelope')
                 raw=base64.b64decode(f['body'],validate=True)
                 status,typ,body=self.dispatch(f['path'],raw,f['auth'])
-                need(type(body) is bytes and len(body)<=MAX_REPLY,'RPC reply exceeds size cap')
-                reply=dict(id=f['id'],status=status,type=typ,body=base64.b64encode(body).decode('ascii'))
-                self.count+=1;self.proc.stdin.write(canonical(reply)+b'\n');self.proc.stdin.flush()
+                reply_limit = self.model_reply_limit if status == 200 and typ == 'text/event-stream' else MAX_REPLY
+                need(type(body) is bytes and len(body)<=reply_limit,'reply exceeds size cap')
+                reply = dict(id=f['id'], status=status, type=typ)
+                if self.binary_replies:
+                    # Relay the verified body without building another base64 copy.
+                    self.proc.stdin.write(canonical(dict(reply, length=len(body))) + b'\n')
+                    self.proc.stdin.write(body)
+                else:
+                    self.proc.stdin.write(canonical(dict(reply, body=base64.b64encode(body).decode('ascii'))) + b'\n')
+                self.proc.stdin.flush()
+                self.count += 1
         except (ValueError,KeyError,OSError,TypeError,RuntimeError) as e:self.error=type(e).__name__;self.ready.set()
 
     def wait(self):
@@ -143,13 +176,16 @@ def sandbox(images, source, snapshot, runtime, profile, base_system, prompt, gat
     need(tuple(parts)==gateway.provider._expected_prompt_fragments,'Harness prompt verification not paired to install')
     spec=dict(system=system,prompt=prompt,profile=profile,tools=tools,rpc=rpc,paged_read=paged_read,token=gateway.token,
               extensions=load['extensions'],skills=load['skills'],templates=[x for x in load['workflows'] if x.endswith('.md')])
+    if profile['maxTokens'] > 8192 or hasattr(gateway.provider, 'model_socket_idle_seconds'):
+        # The broker buffers verified SSE, so the guest can be idle for the entire model turn.
+        spec['provider_timeout_ms'] = (seconds + 15) * 1000
     run=secrets.token_hex(8);name='ee-v3-'+run;side=name+'-relay';vol=name+'-sock'; relay=None;timedout=False
     started=time.monotonic(); report=dict(run=run,image=images.pi,pi=version,node=node,snapshot=snapshot.identity)
     with tempfile.TemporaryDirectory(prefix='ee-v3-input-') as t:
         root=Path(t);stage_tree(root/'engine',source);snapshot.stage(root/'harness',runtime);(root/'spec.json').write_bytes(canonical(spec))
         before=inventory(root);docker('volume','create',vol)
         try:
-            relay=Relay(side,images.bridge,vol,gateway.dispatch);relay.wait()
+            relay=Relay(side,images.bridge,vol,gateway);relay.wait()
             extra=['--mount',ro(HERE/'v3_paged_read.mjs','/opt/ee/v3_paged_read.mjs')] if paged_read else []
             options=[*launch(name),'--read-only','--user','12345:12345','--tmpfs','/scratch:rw,nosuid,nodev,mode=1777,size=384m',
                 '--tmpfs','/tmp:rw,nosuid,nodev,mode=1777,size=64m','--mount',ro(vol,'/gate','volume'),'--mount',ro(root,'/input'),
@@ -164,7 +200,10 @@ def sandbox(images, source, snapshot, runtime, profile, base_system, prompt, gat
             except subprocess.TimeoutExpired: timedout=True;proc=None
         finally:
             docker('rm','-f',name,check=False);docker('rm','-f',side,check=False)
-            if relay:relay.close();report['relay_events']=relay.count;report['transport_fault']=relay.error
+            if relay:
+                relay.close()
+                report.update(relay_events=relay.count, transport_fault=relay.error,
+                              relay_model_socket_idle_seconds=relay.model_socket_idle_seconds)
             report['isolated_state_removed']=(docker('inspect',name,check=False).returncode!=0 and docker('inspect',side,check=False).returncode!=0)
             report['socket_removed']=docker('volume','rm',vol,check=False).returncode==0
         report['unchanged_install']=inventory(root)==before

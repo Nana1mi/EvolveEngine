@@ -11,7 +11,7 @@ from time import monotonic
 import p3
 import node_client
 from evolveengine.v3_context_control import ARTIFACTS, MODEL_REVISION, TOKENIZERS_VERSION, PublicPromptCounter
-from evolveengine.v3_provider import MaxLease, LeaseError
+from evolveengine.v3_provider import GENERATION_TRUNCATED, MaxLease, LeaseError
 
 RUN = 'v3-p3-narrow-20261124-r01'
 FINGERPRINT = 'bc19ba97cbe016479903222bb1578db6'
@@ -70,10 +70,10 @@ class NarrowContract(p3.SourceContract):
 
 class NarrowLease(MaxLease):
     """Public-template count plus preregistered margin, reconciled against reported usage."""
-    def __init__(self, limits, transport, counter):
+    def __init__(self, limits, transport, counter, *, expected_prompt_fragments=()):
         self.counter = counter
         self.assistant_hashes = []
-        super().__init__(limits, transport, fingerprint=FINGERPRINT)
+        super().__init__(limits, transport, fingerprint=FINGERPRINT, expected_prompt_fragments=expected_prompt_fragments)
 
     def _input_ceiling(self, req, tools, meta):
         try:
@@ -133,69 +133,210 @@ def make_worker(ssh, archive):
     return run_job
 
 
-def run(source, output, counter, transport, worker):
+def run(source, output, counter, transport, worker, *, run_id=RUN, limits=p3.CAP,
+        gpu_node_ms=p3.NODE, development_calls=p3.DEV_CALLS, launcher=Path(__file__),
+        lease_factory=NarrowLease, stop_on_delivery=False, registered_config=None, truncation_recoveries=0,
+        operation_ms=p3.UNIT):
     began = monotonic()
     narrow = NarrowContract(source)
     output.mkdir(exist_ok=False)
-    profile = p3.pilot_profile()
-    runtime = p3.runtime_for(p3.PI, (p3.SMOKE/'package-lock.json').read_bytes(), profile, SYSTEM, TOOLS, paged_read=True)
+    profile = dict(p3.pilot_profile(), maxTokens=limits.per_turn_output)
+    if registered_config is not None:
+        profile['contextWindow'] = registered_config['model']['context_window']
+    system = SYSTEM
+    if stop_on_delivery:
+        system += '\n\nThe controller stops after your first accepted deliver_engine. Measure and record your chosen candidate before delivering if you have evidence of a performance improvement.'
+    elif registered_config is not None:
+        system += ('\n\nExplore and measure further variants when useful. You can sign a qualified candidate as a '
+                   'checkpoint and continue working. When you decide to finish, explicitly sign the exact candidate '
+                   'you choose, then summarize your measurements and tradeoffs. Each accepted delivery replaces '
+                   'the previous selection in the experiment record.')
+    runtime = p3.runtime_for(p3.PI, (p3.SMOKE/'package-lock.json').read_bytes(), profile, system, TOOLS, paged_read=True)
     base = {FILE: source}
     snapshot = p3.Snapshot.make({}, p3.EMPTY, runtime)
     lineage = p3.Lineage(output/'harness-lineage', runtime)
     initial = lineage.initialize(snapshot)
     prompt = narrow.prompt()
-    config = dict(run=RUN, launcher_sha=p3.digest(Path(__file__).read_bytes()), engine=p3.source_identity(base),
+    if registered_config is not None and not stop_on_delivery:
+        prompt = prompt.removesuffix(' Summarize the evidence and stop.')
+    config = dict(run=run_id, launcher_sha=p3.digest(launcher.read_bytes()), engine=p3.source_identity(base),
                   start_H=initial, runtime=runtime, target=TARGET, file=FILE, body_lines=[narrow.first+1,narrow.last],
-                  prompt_sha=p3.digest(prompt.encode()), system_sha=p3.digest(SYSTEM.encode()),
-                  fingerprint=FINGERPRINT, profile=profile, limits=asdict(p3.CAP), gpu_node_ms=p3.NODE,
-                  development_calls=p3.DEV_CALLS, job_reservation_ms=p3.UNIT, asset_revision=MODEL_REVISION,
+                  prompt_sha=p3.digest(prompt.encode()), system_sha=p3.digest(system.encode()),
+                  fingerprint=FINGERPRINT, profile=profile, limits=asdict(limits), gpu_node_ms=gpu_node_ms,
+                  development_calls=development_calls, job_reservation_ms=operation_ms, asset_revision=MODEL_REVISION,
                   assets=dict(ARTIFACTS), tokenizers=TOKENIZERS_VERSION, single_episode=True)
+    if registered_config is not None:
+        config['exploration_config'] = registered_config
+        config['driver_sha'] = p3.digest(Path(__file__).read_bytes())
     p3.write_once(output/'registration.json', config)
     baseline, jobs = {}, []
-    report = dict(run=RUN, status='incomplete', stage='same_worker_E0', baseline=baseline, workers=jobs,
+    report = dict(run=run_id, status='incomplete', stage='same_worker_E0', baseline=baseline, workers=jobs,
                   requested_scope='single_engine_function', start_H=initial)
     model = policy = cal = None
+    models = []
+    checkpoints = {}
+    if registered_config is not None:
+        report['segments'] = []
+
+    def cumulative_usage():
+        return dict(input=sum(m.spent_input for m in models),
+                    output_including_reasoning=sum(m.spent_output for m in models))
+
     try:
         e0 = p3.SourceContract.from_args(narrow, {'files': {}})
-        cal = worker('develop_measure', {}, e0.digest, base, p3.UNIT, baseline)
+        if registered_config is not None:
+            baseline.update(operation='develop_measure', engine=e0.digest, reservation_ms=operation_ms)
+            p3.write_once(output/'E0-start.json', baseline)
+        cal = worker('develop_measure', {}, e0.digest, base, operation_ms, baseline)
         p3.need(cal.status == 'observed', 'same-worker E0 failed')
         p3.metrics(cal.data['scenes'])
         p3.write_once(output/'E0.json', baseline)
         print(f'E0 verified on registered worker ({cal.node_ms/1000:.3f} node seconds)', flush=True)
-        remaining = round(p3.WALL*1000-(monotonic()-began)*1000)
-        p3.need(remaining >= p3.UNIT, 'insufficient wall budget after E0')
+        remaining = round(limits.wall_ms-(monotonic()-began)*1000)
+        p3.need(remaining >= operation_ms, 'insufficient wall budget after E0')
         def backend(op, artifact, lease):
             job = {}
+            if registered_config is not None:
+                usage = cumulative_usage()
+                job.update(operation=op, engine=artifact.digest, reservation_ms=lease,
+                           elapsed_ms=round((monotonic()-began)*1000),
+                           api_input_before=usage['input'], api_output_before=usage['output_including_reasoning'],
+                           node_ms_before=policy.spent_node+cal.node_ms)
             jobs.append(job)
+            if registered_config is not None:
+                p3.write_once(output/f'development-{len(jobs):02}-start.json', job)
             try:
                 result = worker(op, dict(artifact.edits), artifact.digest, base, lease, job)
-                p3.write_once(output/f'development-{len(jobs):02}.json', job)
                 if op == 'develop_measure' and result.status == 'observed':
-                    return replace(result, data=dict(result.data, performance_dev=p3.exploratory_index(result.data['scenes'], cal.data['scenes'])))
+                    performance = p3.exploratory_index(result.data['scenes'], cal.data['scenes'])
+                    if registered_config is not None:
+                        job['performance_dev'] = performance
+                    result = replace(result, data=dict(result.data, performance_dev=performance))
+                if truncation_recoveries and op == 'develop_quality':
+                    checkpoints.pop(artifact.digest, None)
+                    if result.status == 'valid':
+                        checkpoints[artifact.digest] = (artifact, result)
                 return result
             except (ValueError, RuntimeError, OSError) as exc:
                 job['error'] = type(exc).__name__
                 raise
+            finally:
+                if registered_config is not None:
+                    job['elapsed_end_ms'] = round((monotonic()-began)*1000)
+                p3.write_once(output/f'development-{len(jobs):02}.json', job)
 
-        policy = p3.Session('evolving_train', lineage, narrow, {}, backend, wall_ms=remaining, node_ms=p3.NODE-cal.node_ms,
-                            dev_calls=p3.DEV_CALLS, reservations={'develop_quality':p3.UNIT, 'develop_measure':p3.UNIT})
-        model = NarrowLease(replace(p3.CAP, wall_ms=remaining), transport, counter)
-        gateway = p3.Gateway(model, policy)
+        policy = p3.Session('evolving_train', lineage, narrow, {}, backend, wall_ms=remaining, node_ms=gpu_node_ms-cal.node_ms,
+                            dev_calls=development_calls, reservations={'develop_quality':operation_ms, 'develop_measure':operation_ms})
+        start_source = base
+        start_prompt = prompt
+        active_limits = replace(limits, wall_ms=remaining)
+        if registered_config is not None:
+            policy.deadline = began + limits.wall_ms/1000
         report['stage'] = 'agent'
-        print('Single-function Pi session started', flush=True)
-        report['runner'] = p3.sandbox(p3.PI, base, snapshot, runtime, profile, SYSTEM, prompt, gateway,
-                                      seconds=remaining//1000, tools=TOOLS, paged_read=True)
-        report['status'] = 'session_completed' if report['runner']['status'] == 'pi_session_complete' and not policy.worker_invalid else 'unsettled'
+        for segment in range(1, truncation_recoveries + 2):
+            load = snapshot.manifest['load']
+            files = dict(snapshot.items)
+            fragments = [files[name].decode() for name in load['prompts'] + load['memory']]
+            if registered_config is None:
+                model = lease_factory(active_limits, transport, counter)
+            else:
+                model = lease_factory(active_limits, transport, counter, segment=segment,
+                                      expected_prompt_fragments=fragments)
+                model.deadline = policy.deadline
+            models.append(model)
+            gateway = p3.Gateway(model, policy, delivery_complete=(lambda: policy.delivered is not None) if stop_on_delivery else None)
+            seconds = active_limits.wall_ms//1000
+            if registered_config is not None:
+                seconds = int(policy.deadline-monotonic())
+            p3.need(seconds > 0, 'insufficient wall budget for Pi')
+            print(f'Single-function Pi session segment {segment} started', flush=True)
+            runner = p3.sandbox(p3.PI, start_source, snapshot, runtime, profile, system, start_prompt, gateway,
+                                seconds=seconds, tools=TOOLS, paged_read=True)
+            report['runner'] = runner
+            clean = (runner['isolated_state_removed'] and runner['socket_removed'] and runner['unchanged_install']
+                     and not runner['transport_fault'] and not runner.get('timed_out'))
+            truncated = bool(model.rows and model.rows[-1]['result'] == GENERATION_TRUNCATED
+                             and model.rows[-1]['usage'] == 'settled')
+            context_full = (registered_config is not None and model.rejections
+                            and model.rejections[-1]['reason'] == 'context_generation_window'
+                            and not model.rejections[-1]['dispatched'])
+            resume_cause = GENERATION_TRUNCATED if truncated else 'context_generation_window' if context_full else None
+            if registered_config is not None:
+                segment_report = dict(segment=segment, start_engine=p3.source_identity(start_source),
+                                      start_H=snapshot.identity, limits=asdict(active_limits), runner=runner,
+                                      stop_cause=resume_cause,
+                                      usage=dict(input=model.spent_input, output_including_reasoning=model.spent_output))
+                p3.write_once(output/f'pi-segment-{segment:02}.json', segment_report)
+                report['segments'].append(segment_report)
+            report['status'] = 'session_completed' if runner['status'] == 'pi_session_complete' and not policy.worker_invalid else 'unsettled'
+            if stop_on_delivery and policy.delivered is not None and not policy.worker_invalid and clean:
+                report.update(status='agent_delivered', stop_cause='agent_delivery')
+                break
+            if not resume_cause:
+                if registered_config is not None:
+                    if model.rejections:
+                        report['stop_cause'] = model.rejections[-1]['reason']
+                    elif report['status'] == 'session_completed':
+                        report['stop_cause'] = 'agent_finished'
+                    elif model.rows and model.rows[-1]['result'] != 'complete':
+                        report['stop_cause'] = model.rows[-1]['result']
+                    elif runner.get('timed_out'):
+                        report['stop_cause'] = 'wall_lease'
+                break
+            report['stop_cause'] = resume_cause
+            if segment > truncation_recoveries:
+                break
+            if not clean or policy.worker_invalid:
+                report['recovery_blocked'] = 'session_cleanup_or_worker'
+                break
+            used = cumulative_usage()
+            input_left = limits.input-used['input']
+            output_left = limits.output-used['output_including_reasoning']
+            requests_left = limits.turns-sum(len(m.rows) for m in models)
+            wall_left = int(1000*(policy.deadline-monotonic()))
+            if input_left <= 0 or output_left < limits.per_turn_output or requests_left <= 0 or wall_left < 1000:
+                report['recovery_blocked'] = 'remaining_budget'
+                break
+            active_limits = replace(limits, input=input_left, output=output_left, turns=requests_left, wall_ms=wall_left)
+            snapshot = lineage.active()
+            start_source = base
+            recovery = dict(trigger=resume_cause, engine=e0.digest, source_sha=p3.digest(source), harness=snapshot.identity,
+                            quality_receipt=None, limits=asdict(active_limits))
+            if checkpoints:
+                checkpoint, receipt = next(reversed(checkpoints.values()))
+                raw = dict(checkpoint.edits)[FILE]
+                p3.need(narrow.from_args({'files': {FILE: raw.decode()}}) == checkpoint
+                        and policy.qualified.get(checkpoint.digest) == receipt
+                        and (receipt.engine, receipt.operation, receipt.status) == (checkpoint.digest, 'develop_quality', 'valid'),
+                        'recovery checkpoint does not match its trusted quality receipt')
+                with (output/'recovery-gguf.py').open('xb') as fp:
+                    fp.write(raw)
+                start_source = {FILE: raw}
+                recovery.update(engine=checkpoint.digest, source_sha=p3.digest(raw), quality_receipt=receipt.receipt_id)
+            p3.write_once(output/'recovery-start.json', recovery)
+            report['recovery'] = recovery
+            fact = (f'The current file is the last qualified candidate, Engine {recovery["engine"]}, '
+                    f'with valid develop_quality receipt {recovery["quality_receipt"]}. '
+                    'It can be measured or delivered as-is.' if recovery['quality_receipt'] else
+                    'No quality-qualified candidate was available. The current file is the original E0.')
+            notice = ('The previous model response reached its generation limit.' if truncated else
+                      'The prior conversation could no longer fit a full generation window.')
+            start_prompt = (prompt + f'\n\n{notice} This is a fresh Pi process in the same '
+                            f'experiment with the remaining original budget and the activated Harness. {fact} '
+                            'Continue from the current file. Read only the pages needed for the next action. '
+                            'Prior chat and temporary files are unavailable.')
+            report.pop('stop_cause', None)
         report['stage'] = 'finished'
     except (ValueError, TypeError, RuntimeError, OSError, KeyError) as exc:
         report['failure'] = type(exc).__name__
         report['failure_detail'] = str(exc)[:220] if type(exc) is ValueError else None
     finally:
         if model is not None:
-            report.update(provider=model.rows, provider_rejections=model.rejections,
-                          usage=dict(input=model.spent_input, output_including_reasoning=model.spent_output))
+            report.update(provider=[row for m in models for row in m.rows],
+                          provider_rejections=[row for m in models for row in m.rejections],
+                          usage=cumulative_usage())
         if policy is not None:
-            report.update(rpc=policy.rows, development_calls=p3.DEV_CALLS-policy.calls_left,
+            report.update(rpc=policy.rows, development_calls=development_calls-policy.calls_left,
                           qualified=[r.receipt_id for r in policy.qualified.values() if r.status == 'valid'],
                           node_ms=policy.spent_node+cal.node_ms, final_H=lineage.freeze().identity)
             if policy.delivered is not None:
@@ -205,6 +346,9 @@ def run(source, output, counter, transport, worker):
                 report.update(delivered=policy.delivered.digest, delivered_sha256=p3.digest(raw))
         elif cal is not None:
             report['node_ms'] = cal.node_ms
+        elif registered_config is not None and (output/'E0-start.json').exists():
+            report['node_usage'] = 'unsettled'
+            report['node_ms_reserved'] = operation_ms
         report['wall_ms'] = round((monotonic()-began)*1000)
         p3.write_once(output/'receipt.json', report)
     return report

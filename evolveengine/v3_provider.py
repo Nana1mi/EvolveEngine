@@ -31,6 +31,9 @@ REJECTION_CODES={
     'text or output token reservation exceeds remaining cap':'token_reservation',
     'registered Harness prompt fragment missing':'harness_prompt',
     'input reservation unavailable':'input_reservation_unavailable',
+    'full generation window unavailable':'full_generation_window_unavailable',
+    'context cannot fit full generation window':'context_generation_window',
+    'API cost reservation exceeds remaining RMB':'api_cost_limit',
 }
 
 
@@ -106,6 +109,15 @@ def tool_result_metadata(messages):
 
 
 class MaxLease:
+    context_window = None
+    require_full_generation_window = False
+    record_generation_timing = False
+    finish_reasons = frozenset({'stop', 'tool_calls', 'length', 'content_filter'})
+    sse_bytes_per_token = 256
+
+    def sse_byte_limit(self, token_cap):
+        return token_cap * self.sse_bytes_per_token + 2**20
+
     def __init__(self,limits,transport,*,fingerprint=None, clock=time.monotonic, expected_prompt_fragments=()):
         self.limits=limits;self.transport=transport;self.fingerprint=fingerprint;self.clock=clock
         self.deadline=clock()+limits.wall_ms/1000;self.spent_input=self.spent_output=0;self.rows=[];self.rejections=[];self.seen_ids={};self.poisoned=False
@@ -116,8 +128,9 @@ class MaxLease:
 
     def _read(self,up,ceiling):
         data=bytearray(); usage=None; reasons=[]; ids={};models=set();fps=set();finish=None;done=False
+        first_delta = last_delta = None
         for line in up:
-            self._left();need(isinstance(line,bytes) and len(data)+len(line)<=ceiling*256+2**20,'SSE size reservation exceeded')
+            self._left();need(isinstance(line,bytes) and len(data)+len(line)<=self.sse_byte_limit(ceiling),'SSE size reservation exceeded')
             data.extend(line)
             if not line.startswith(b'data:'):continue
             piece=line[5:].strip()
@@ -140,10 +153,16 @@ class MaxLease:
                     need(type(x) is dict,'invalid stream tool call')
                     if x.get('id'):
                         ix=x.get('index');need(type(x['id']) is str and type(ix) is int and ix>=0 and (ix not in ids or ids[ix]==x['id']),'ambiguous tool identity');ids[ix]=x['id']
+                if self.record_generation_timing and (v or d.get('content') or calls):
+                    last_delta = self.clock()
+                    if first_delta is None:
+                        first_delta = last_delta
                 if z.get('finish_reason') is not None:finish=z['finish_reason']
-        self._left();need(done and finish in {'stop','tool_calls','length','content_filter'},'missing or unsupported SSE completion')
+        self._left();need(done and finish in self.finish_reasons,'missing or unsupported SSE completion')
         need(len(set(ids.values()))==len(ids),'duplicate response tool ID')
         need(finish!='tool_calls' or ids,'incomplete tool call response')
+        if first_delta is not None:
+            self.rows[-1]['generation_timing'] = dict(first_delta_monotonic=first_delta, last_delta_monotonic=last_delta)
         return bytes(data),usage,models,fps,finish,digest(''.join(reasons).encode()),bool(reasons),list(ids.values())
 
     def _input_ceiling(self,req,tools,meta):
@@ -179,9 +198,15 @@ class MaxLease:
                 if isinstance(exc,LeaseError):raise
                 raise LeaseError('model request unavailable; see trusted diagnostics') from None
 
+    def _authorize_upstream(self, meta):
+        pass
+
+    def _settle_upstream(self, row):
+        pass
+
     def _do(self,raw,meta,stage):
         need(not self.poisoned and len(self.rows)<self.limits.turns,'provider lease unavailable')
-        timeout=self._left()
+        self._left()
         stage['phase']='request_size';need(type(raw) is bytes and 0<len(raw)<=self.limits.request_bytes,'model request size')
         stage['phase']='parse'
         try:req=json.loads(raw)
@@ -204,11 +229,19 @@ class MaxLease:
         need(type(bound) is int and bound>0,'input reservation unavailable')
         meta['input_bound']=bound
         cap=min(self.limits.per_turn_output,self.limits.output-self.spent_output)
+        if self.context_window is not None:
+            cap = min(cap, self.context_window - bound)
         if 'max_tokens' in req:
             asked=req['max_tokens'];need(type(asked) is int and asked>0,'invalid turn output request')
             meta['requested_max_tokens']=asked;cap=min(cap,asked)
         meta['output_bound']=cap
-        need(bound<=self.limits.input-self.spent_input and cap>0,'text or output token reservation exceeds remaining cap')
+        need(bound<=self.limits.input-self.spent_input,'text or output token reservation exceeds remaining cap')
+        if self.require_full_generation_window:
+            full = self.limits.per_turn_output
+            need(meta['requested_max_tokens'] == full and self.limits.output-self.spent_output >= full,
+                 'full generation window unavailable')
+            need(cap == full, 'context cannot fit full generation window')
+        need(cap>0,'text or output token reservation exceeds remaining cap')
         stage['phase']='wire'
         req.pop('max_completion_tokens',None);req.update(max_tokens=cap,stream_options=dict(include_usage=True))
         wire=canonical(req)
@@ -218,6 +251,9 @@ class MaxLease:
             need(fragment and fragment in systems,'registered Harness prompt fragment missing')
             loaded.append(digest(fragment.encode()))
         meta['upstream_request_bytes']=len(wire)
+        timeout=self._left()
+        stage['phase']='cost_reservation'
+        self._authorize_upstream(meta)
         row=dict(turn=len(self.rows)+1, model=MODEL, thinking='enabled', effort='max', upstream_sha=digest(wire),
                  prior_tool_contexts=len(prior), toolset_sha=digest(canonical(tools)), prompt_fragments=loaded,
                  input_reserved=bound, output_reserved=cap, request_meta=dict(meta))
@@ -272,4 +308,13 @@ class MaxLease:
                 stage['upstream_reason']='upstream_verification'
             else:stage['upstream_reason']='unknown'
             raise LeaseError('provider stream failed verification; no automatic retry') from None
-        finally:row['wall_ms']=round((self.clock()-start)*1000)
+        finally:
+            row['wall_ms'] = round((self.clock()-start)*1000)
+            timing = row.get('generation_timing')
+            if timing is not None:
+                first = timing.pop('first_delta_monotonic')
+                last = timing.pop('last_delta_monotonic')
+                timing.update(first_delta_ms=round((first-start)*1000),
+                              last_delta_ms=round((last-start)*1000),
+                              output_span_ms=round((last-first)*1000))
+            self._settle_upstream(row)

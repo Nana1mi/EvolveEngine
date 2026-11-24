@@ -16,7 +16,12 @@ await fs.mkdir('/scratch/work',{recursive:true});await fs.mkdir('/scratch/pi',{r
 await fs.cp('/input/engine','/scratch/work',{recursive:true,force:false,errorOnExist:true});
 try{await fs.cp('/input/harness','/scratch/harness',{recursive:true,force:false,errorOnExist:true});}
 catch(e){if(e.code!=='ENOENT')throw e;await fs.mkdir('/scratch/harness');}
-await fs.writeFile('/scratch/pi/settings.json',JSON.stringify({compaction:{enabled:false},retry:{enabled:false,provider:{maxRetries:0}}}));
+const settings = {compaction: {enabled: false}, retry: {enabled: false, provider: {maxRetries: 0}}};
+if (spec.provider_timeout_ms) {
+  settings.httpIdleTimeoutMs = spec.provider_timeout_ms;
+  settings.retry.provider.timeoutMs = spec.provider_timeout_ms;
+}
+await fs.writeFile('/scratch/pi/settings.json', JSON.stringify(settings));
 await fs.writeFile('/scratch/pi/models.json',JSON.stringify({providers:{wire:{baseUrl:'http://127.0.0.1:30091/v1',api:'openai-completions',apiKey:spec.token,models:[spec.profile]}}}));
 const args=['/opt/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js','--mode','json','--provider','wire','--model','deepseek-flash','--thinking','max','--no-session','--no-extensions','--no-mcp','--no-context-files','--no-skills','--no-prompt-templates'];
 if(spec.tools)args.push('--tools',spec.tools.join(','));
