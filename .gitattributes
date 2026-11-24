@@ -1,3 +1,4 @@
 *.sh text eol=lf
 "/研究方案/09 Level3 自由探索最终方案.md" -text
 /experiments/spark26_gguf/level3/acceptance-v*.json -text
+/experiments/spark26_gguf/level3/task-v1.txt -text
