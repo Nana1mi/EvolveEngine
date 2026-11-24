@@ -1,0 +1,16 @@
+{
+  "protocol": "spark26-level3-acceptance-v1",
+  "audit_basis_git": "ae0b11e033186c5fe88c92414f09c16d19d0e535",
+  "target": "SGLang Spark-X2.6-1.7B Q8_0 on isolated NVIDIA GB10",
+  "gates": {
+    "A1": {"requires": ["pi_wire_profile", "full_window_reservation", "long_sse_replay", "silent_transport", "level3_runtime_integration"], "reuse": ["ae0b11e long-SSE and 1205s silent-upstream evidence"], "live": false},
+    "A2": {"requires": ["truncation", "context_window", "network_failure", "partial_tool_not_executed", "checkpoint_revalidated", "shared_budget_reconciled"], "live": false},
+    "A3": {"requires": ["pinned_full_source_inventory", "multi_file_python_triton_cuda_cpp", "build_files_and_parameters", "protected_paths_denied", "same_candidate_identity_on_worker"], "live": false},
+    "A4": {"requires": ["native_positive_fixture", "cold_build", "incremental_build", "isolated_deploy", "loaded_identity", "changed_native_path_executed", "quality_pass", "four_scene_measure"], "live": true},
+    "A5": {"requires": ["two_independent_e0_cold_builds", "same_toolchain_runtime_and_dependencies", "artifact_identity_or_explained_difference", "paired_four_scene_baseline"], "live": true},
+    "A6": {"requires": ["native_positive_pass", "preregistered_real_native_fault_rejected", "external_weight_hash", "external_memory_observation", "isolated_output_gate", "documented_residency_limits"], "live": true},
+    "A7": {"requires": ["worker_profiler_availability", "timeline_and_kernel_duration", "launch_sync_evidence", "available_counters_or_explicit_unavailable", "ttft_tpot_throughput", "profile_isolated_from_timing"], "live": true},
+    "A8": {"requires": ["agent_checkpoint", "agent_activates_harness", "ordinary_session_transition", "new_tool_execution", "structured_facts_and_total_cost", "explicit_final_engine_and_active_harness"], "live": false}
+  },
+  "trial": {"starts_only_after_all_gates": true, "requires_specific_resource_authorization": true, "performance_gain_required_for_engineering_acceptance": false, "formal_w_or_b0_b2": false}
+}

@@ -1,0 +1,79 @@
+{
+  "protocol": "spark26-level3-exploration-v2",
+  "frozen_date": "2026-11-24",
+  "audit_basis_git": "ae0b11e033186c5fe88c92414f09c16d19d0e535",
+  "objective": {"path": "研究方案/09 Level3 自由探索最终方案.md", "sha256": "5fecf2a1900d5946b9c3a3c8f04dafcbf2ff181d431421a8ed79bbc21948bcc8"},
+  "prior_registration": {"path": "experiments/spark26_gguf/level3/acceptance-v1.json", "sha256": "87389b9ecd513ac9220c4dd25a1a769c6e7664723578d6522b470d6685c8ea7e", "role": "historical scope; not a launch substitute"},
+  "target": "SGLang Spark-X2.6-1.7B GGUF Q8_0 on isolated NVIDIA GB10",
+  "domains": [
+    {
+      "id": "A", "capability": "Agent Runtime", "current_status": "partial", "required": true,
+      "existing_evidence": ["experiments/spark26_gguf/v3_dev_rpc/EXPLORATION.md", "experiments/spark26_gguf/v3_dev_rpc/launcher-context-candidate-01.json", "experiments/spark26_gguf/v3_dev_rpc/rehearse_silent_upstream.py"],
+      "remaining_work": "Independent Level 3 driver; connect model and transport to the whole-tree workflow, and checkpoint abnormal exits without dropping or double-counting usage.",
+      "dependencies": ["Pinned Pi and DeepSeek tokenizer/provider", "E checkpoint and F accounting and stop interfaces"],
+      "acceptance_tests": {
+        "A1": {"execution": "mixed", "pass": "Verify current official provider contract. Under real Pi offline replay inspect the outbound request for model ID, enabled thinking, Max, 393216 output, SSE and intact reasoning replay; bind Pi version, config and actual provider fingerprint from an authorized real response. Bind existing scoped long-SSE and 1205-second silent-upstream evidence if transport identity is unchanged, else exercise the changed layer. Do not induce a huge paid generation."},
+        "A2": {"execution": "offline", "pass": "With real Pi and injected length, context admission, network loss and guest/worker failures, record terminal cause, reconcile or conservatively mark unknown usage, execute no incomplete tool, verify recovery from a bound checkpoint within the shared ceiling, and repeat with missing/corrupt checkpoint to prove fail closed."}
+      }
+    },
+    {
+      "id": "B", "capability": "Research Environment", "current_status": "not_implemented", "required": true,
+      "existing_evidence": ["experiments/p2_os_boundary/RESULT-20261123.md", "experiments/spark26_gguf/TARGET_PILOT_LOCK.md"],
+      "remaining_work": "Controlled host research RPC for search, paper/read and public reference source; provenance cache; true target/guest discovery; locked dependencies in an isolated environment.",
+      "dependencies": ["Documented public source adapters and fees", "Guest with no outbound network", "GB10 inventory", "Trusted dependency staging"],
+      "acceptance_tests": {
+        "B1": {"execution": "public_network", "pass": "Call search and read for one real public web result, fetch and page one real paper body, and read/reference-checkout public source at one exact Git commit. Reopen from immutable cache; record content hashes, canonical URL, retrieval time/version, attribution or unknown license, bytes, retrieval attempts and charges."},
+        "B2": {"execution": "mixed", "pass": "Observe actual GB10 hardware/software, target and launch configuration and remaining limits through the trusted interface; distinguish guest from worker. Install and use a hash-locked required Python or Node dependency in a fresh isolated environment without agent-side network access."},
+        "B3": {"execution": "offline", "pass": "Reject local/private/internal/credential-bearing destinations, disallowed redirects and protected research/evaluation artifacts. Prove content containing instructions remains inert data and downloaded reference/dependency material has no automatic execution or prompt privilege."}
+      }
+    },
+    {
+      "id": "C", "capability": "Engine Development", "current_status": "partial", "required": true,
+      "existing_evidence": ["experiments/spark26_gguf/TARGET_PILOT_LOCK.md", "experiments/spark26_gguf/SHA256SUMS", "experiments/spark26_gguf/v3_dev_rpc/node_client.py"],
+      "remaining_work": "Pinned full source, editable Native artifacts, bounded programmable diagnostics, verifiable Native deployment and profiling, and multi-version/branch operations.",
+      "dependencies": ["Pinned full tree/overlay and offline wheels", "Isolated ARM64 GB10 build and runtime image", "D quality/measure protocol", "F independent resource leases"],
+      "acceptance_tests": {
+        "C1": {"execution": "offline", "pass": "Use real Pi with mocked upstream to discover and page the full pinned tree, submit one multi-file edit including Python, Triton, CUDA, C++ and a build parameter, and verify content identity at materialization. Save two branches from a parent, restore each, and prove protected paths/unregistered bytes cannot cross into the candidate."},
+        "C2": {"execution": "gb10", "pass": "Execute an agent-authored bounded diagnostic under isolated leases and label it non-scoring. A trusted profile run records timeline, kernel and launch/synchronization evidence plus TTFT/TPOT/throughput and counter availability; missing unsupported optional counters are explicit."},
+        "C3": {"execution": "gb10", "pass": "Run the preregistered positive Native fixture through cold and incremental compile, isolated deploy, quality and four-scene measure. Record build cost/flags/toolchain/cache identity and prove the changed path really executed, not merely loaded. Independently cold-build E0 twice in production-of-evidence parity with candidates, bind identities and explain nonidentical bytes."}
+      }
+    },
+    {
+      "id": "D", "capability": "Trusted Evaluation", "current_status": "partial", "required": true,
+      "existing_evidence": ["experiments/spark26_gguf/v3_dev_rpc/g1a-03.json", "experiments/spark26_gguf/g1_v/receipt-v01-20261123.json", "experiments/spark26_gguf/four_scene_e0/result-20261123.json"],
+      "remaining_work": "Extend bounded G0/G1 to Native; preregister distinct held-out exploratory Q/T protocol and paired E0 noise policy; isolate profiling and diagnostics from scoring.",
+      "dependencies": ["C identity/deploy", "Trusted frozen fixtures, candidate-independent observations and holdout lock", "Research lead approval of Q/T"],
+      "acceptance_tests": {
+        "D1": {"execution": "offline", "pass": "Approve and hash the exploratory held-out Q/T protocol before opening launch. Prove custom diagnostics and D cannot access Q/T, Q/T is separate from future RQ-A, and final Q/T is evaluated only after sealing delivery, never returned to the Agent for selection."},
+        "D2": {"execution": "gb10", "pass": "Run preregistered legal and representative Native compute-negative controls plus EOS, vocabulary, mixed request/KV isolation and quantized residency negatives. Verify expected detection, external weight hash and memory/output evidence, and correctness on the actual timing configuration. Missing evidence is distinct from rejection; document residual detection limits."},
+        "D3": {"execution": "gb10", "pass": "Preregister E0 stability, pair order, repeat count and acceptance criteria; run E0/E0 noise calibration with separate exclusively measured W1–W4 windows and no profiler. Bind all metrics/engine identities and preserve raw per-scene values and equal-weight ratios."}
+      }
+    },
+    {
+      "id": "E", "capability": "Harness Evolution", "current_status": "partial", "required": true,
+      "existing_evidence": ["experiments/spark26_gguf/v3_dev_rpc/launcher-pair-07.json", "experiments/spark26_gguf/v3_dev_rpc/EXPLORATION.md"],
+      "remaining_work": "Dual objective and ordinary transition, isolated research-state handoff, Harness verification/activation, and explicit final choice not tied to first quality pass.",
+      "dependencies": ["A runtime", "C qualified engine store", "B research artifact cache", "F receipt ledger"],
+      "acceptance_tests": {
+        "E1": {"execution": "offline", "pass": "Use real Pi and scripted upstream to submit, validate/load-test and activate a fixture Harness. On normal Agent-requested continuation (not failure), prove a fresh Pi loads, exposes and invokes the new component; also test continued H0 and active-version rollback. The dual-goal prompt neither requires a Harness update nor discloses fixture solutions."},
+        "E2": {"execution": "offline", "pass": "Replay selected qualified E, active H, trusted M_E, tagged untrusted M_H/R, and explicitly saved WIP into a fresh segment; exclude old Pi state, unregistered files and sealed data. A WIP-only or missing-state delivery is rejected. Distinguish qualify, measure, checkpoint, normal continue, abnormal recovery and final delivery; chosen legal artifact may be slower than historical best."}
+      }
+    },
+    {
+      "id": "F", "capability": "Governance & Observability", "current_status": "partial", "required": true,
+      "existing_evidence": ["experiments/spark26_gguf/v3_dev_rpc/EXPLORATION.md", "experiments/p2_os_boundary/RESULT-20261123.md", "experiments/spark26_gguf/v3_dev_rpc/infra-02.json"],
+      "remaining_work": "Cross-segment resource event catalog, source/license checks, layered fault reporting and explicit end-to-end emergency stop with settlement and cleanup.",
+      "dependencies": ["All operation adapters", "Externally protected artifacts and ledger", "Resources individually authorized"],
+      "acceptance_tests": {
+        "F1": {"execution": "mixed", "pass": "Reconcile successful and unsuccessful API, Research, dependency, build, deploy, diagnostics/profile, quality, measure, checkpoint and restore operations against immutable receipts and artifact/policy/model identities. Distinguish usage from reservations and estimates, classify failures or unknown, and retain unsuccessful costs without manufacturing a performance value."},
+        "F2": {"execution": "mixed", "pass": "Exercise a manual stop during each active lane (Pi/provider, Research, build/diagnostic, GPU); record cancellation and verified cleanup or quarantine/uncertain settlement with no next dispatch. Verify credentials, production data and holdout boundaries. Check all prospective live work against explicit scope plus caps; fail closed without separately recorded authorization."}
+      }
+    }
+  ],
+  "launch": {
+    "requires_all_domains": true,
+    "requires_separate_resource_authorization": true,
+    "performance_gain_required_for_engineering_acceptance": false,
+    "formal_w_or_b0_b2": false
+  }
+}
