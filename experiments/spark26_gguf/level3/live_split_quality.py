@@ -19,6 +19,7 @@ ROOT=HERE.parents[2]
 SCHEMA='spark26-live-split-quality-registration-v1'
 OVERLAY_CHANGES=frozenset((*('experiments/spark26_gguf/level3/'+n for n in ('node_preflight.py','worker_stdio.py')),
     *('evolveengine/v3_level3_'+n+'.py' for n in ('collect','evidence','trajectory_lane','worker'))))
+OPTIONAL_OVERLAY_CHANGES = frozenset({'experiments/spark26_gguf/level3/profile_control.py'})
 TEACHER_SOURCE={
     'registration': {'path':'/var/tmp/ee-l3-thinking-chat.X45fJZlz/build-registration.json',
                      'sha256':'2b2dc1aabb65e2a01c2ccbdc0b97aadadbe3a4167c11589af64f3f7fb154bb34'},
@@ -53,9 +54,10 @@ def extra_sources():
 
 def verify_overlay(baseline, live, registration):
     changes=registration['implementation_overlay']
-    need(baseline.keys()==live.keys() and set(changes)==OVERLAY_CHANGES and changes.keys()<=baseline.keys() and
-         {k for k in baseline if baseline[k]!=live[k]}==OVERLAY_CHANGES and
-         all(changes[k]==[baseline[k],live[k]] for k in changes),
+    changed_paths = set(changes)
+    need(baseline.keys()==live.keys() and OVERLAY_CHANGES <= changed_paths <= OVERLAY_CHANGES | OPTIONAL_OVERLAY_CHANGES
+         and changed_paths <= baseline.keys() and {k for k in baseline if baseline[k]!=live[k]} == changed_paths
+         and all(changes[k]==[baseline[k],live[k]] for k in changes),
          'live split overlay changes unregistered baseline code')
 
 

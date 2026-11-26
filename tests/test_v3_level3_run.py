@@ -1,4 +1,7 @@
+from contextlib import contextmanager
 from pathlib import Path
+import json
+import os
 from dataclasses import replace
 from types import SimpleNamespace
 import sys
@@ -230,6 +233,60 @@ class DevelopmentComparisonTests(TestCase):
 
 
 class ExplorationAccountingTests(TestCase):
+    def test_live_controller_opens_model_lease_after_connecting_worker(self):
+        scripts = Path(__file__).resolve().parents[1]/'experiments/spark26_gguf/level3'
+        with patch.object(sys, 'path', [str(scripts), *sys.path]):
+            import launch_live
+
+        config, limits = launch_live.cfg.validate_objective_config(
+            json.loads(launch_live.ENGINEERING_CONFIG.read_bytes()))
+        config = dict(config, research=None, scoring=None)
+        plan = dict(scope=launch_live.ENGINEERING_SCOPE, corpus_sha256=None)
+        lease = dict(node_ms=None, jobs=None, max_per_op={})
+        admission = (plan, config, limits, {}, {}, lease, {'pin': 'a'*64}, None)
+        wire = b'offline request fixture'
+        upstream_reply = [b'data: offline fixture\n']
+
+        @contextmanager
+        def connect_worker(*args, **kwargs):
+            yield object()
+
+        @contextmanager
+        def send_to_upstream(body, timeout):
+            self.assertEqual((body, timeout), (wire, 1))
+            yield upstream_reply
+
+        class ReachedUpstream(Exception):
+            pass
+
+        def begin_exploration(output, _contract, _worker, _launch, make_lease,
+                              _runtime, _prompt, active_limits, **options):
+            self.assertTrue(options['continuous'])
+            model = make_lease(active_limits, 1, ())
+            self.assertEqual(model.model_socket_idle_seconds,
+                             config['transport']['relay_socket_idle_seconds'])
+            model.attempts = 1
+            with model.transport(wire, 1) as reply:
+                self.assertEqual(list(reply), upstream_reply)
+                heartbeat = json.loads((model.directory/'stream-progress.json').read_bytes())
+                self.assertEqual(heartbeat['attempt'], 1)
+                self.assertEqual(heartbeat['data_frames'], 1)
+                self.assertTrue((output.parent/'deepseek-started.json').is_file())
+            raise ReachedUpstream
+
+        with (TemporaryDirectory() as tmp,
+              patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'offline-fixture'}),
+              patch.object(launch_live, 'audit', return_value=admission),
+              patch.object(launch_live.SourceContract, 'acquire_spark26_e0', return_value=object()),
+              patch.object(launch_live.cfg.narrow, 'PublicPromptCounter', return_value=object()),
+              patch.object(launch_live.cfg, 'provider_transport', return_value=send_to_upstream),
+              patch.object(launch_live, 'durable_ssh_worker', connect_worker),
+              patch.object(launch_live, 'explore', begin_exploration)):
+            root = Path(tmp)
+            approval = dict(path=str(root/'plan.json'), sha256='b'*64)
+            with self.assertRaises(ReachedUpstream):
+                launch_live.execute(root/'receipt', approval, None, None, None, 'offline-worker')
+
     def test_token_reservation_refusal_is_recorded_as_resource_limit(self):
         model = SimpleNamespace(rejections=[dict(dispatched=False, reason='token_reservation')])
         self.assertTrue(_budget_limited(model))

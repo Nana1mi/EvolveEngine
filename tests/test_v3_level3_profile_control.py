@@ -79,6 +79,16 @@ class ProfileControlTests(TestCase):
         self.assertNotIn('--disable-prefill-cuda-graph', both['profile_argv'])
         self.assertFalse(both['scoring'])
 
+    def test_incremental_graph_profile_uses_the_registered_service_args(self):
+        from types import SimpleNamespace
+        from evolveengine.v3_level3_deploy import IMMEDIATE_GRAPH_WIRE, launch_args
+
+        spec = SimpleNamespace(launch_profile=IMMEDIATE_GRAPH_WIRE)
+        command = r.trace_args(spec.launch_profile, 'e0_graph')
+        self.assertIn('--cuda-graph-trace=graph:host-only', command)
+        self.assertEqual(command[command.index('--')+2:], tuple(launch_args(spec)))
+        self.assertIn('--incremental-streaming-output', command)
+
     def test_graph_rejects_startup_and_warm_activity(self):
         with TemporaryDirectory() as folder:
             trace = Path(folder).resolve()/'trace.sqlite'

@@ -52,15 +52,22 @@ class DevelopmentArtifacts:
         _check(stat.S_ISREG(before.st_mode) and path.resolve(strict=True) == path.absolute(),
                'development artifact is not a regular host file')
         with path.open('rb') as stream:
-            stamp = _identity(before)
-            _check(_identity(os.fstat(stream.fileno())) == stamp, 'artifact changed before publication')
+            path_stamp = _identity(before)
+            handle_stamp = _identity(os.fstat(stream.fileno()))
+            # NTFS name and handle queries can report different change times.
+            # Compare the two clocks separately after binding them to one file.
+            same_file = (path_stamp[:-1] == handle_stamp[:-1] if os.name == 'nt'
+                         else path_stamp == handle_stamp)
+            _check(same_file, 'artifact changed before publication')
             h = sha256()
             for block in iter(lambda:stream.read(1<<20), b''):
                 h.update(block)
-            _check(_identity(os.fstat(stream.fileno())) == stamp, 'artifact changed during publication')
+            _check(_identity(os.fstat(stream.fileno())) == handle_stamp
+                   and _identity(path.lstat()) == path_stamp, 'artifact changed during publication')
         pin = h.hexdigest()
         _check(expected is None or expected == pin, 'published artifact hash differs')
-        self.files[pin] = (path, stamp, dict(identity=pin, bytes=before.st_size, kind=kind, label=label))
+        self.files[pin] = (path, path_stamp, handle_stamp,
+                           dict(identity=pin, bytes=before.st_size, kind=kind, label=label))
         return pin
 
     def query(self, view, identity=None, offset=0, limit=None):
@@ -68,22 +75,23 @@ class DevelopmentArtifacts:
         if view == 'list':
             _check(identity is None, 'list does not take an artifact identity')
             count = self._count(limit, 48)
-            items = sorted((entry[2] for entry in self.files.values()), key=lambda v:v['identity'])
+            items = sorted((entry[3] for entry in self.files.values()), key=lambda v:v['identity'])
             rows = items[offset:offset+count]
             return dict(items=rows, next_offset=offset+len(rows) if offset+len(rows)<len(items) else None)
         _check(type(identity) is str and identity in self.files, 'unpublished artifact identity')
-        path, stamp, metadata = self.files[identity]
-        _check(_identity(path.lstat()) == stamp and stat.S_ISREG(path.lstat().st_mode),
+        path, path_stamp, handle_stamp, metadata = self.files[identity]
+        current = path.lstat()
+        _check(_identity(current) == path_stamp and stat.S_ISREG(current.st_mode),
                'published artifact changed')
         if view == 'read':
             count = self._count(limit, PAGE_BYTES)
             size = metadata['bytes']
             _check(offset<=size, 'artifact offset beyond end')
             with path.open('rb') as stream:
-                _check(_identity(os.fstat(stream.fileno())) == stamp, 'published artifact changed')
+                _check(_identity(os.fstat(stream.fileno())) == handle_stamp, 'published artifact changed')
                 stream.seek(offset)
                 data = stream.read(min(size-offset,count))
-                _check(len(data)==min(size-offset,count) and _identity(os.fstat(stream.fileno())) == stamp,
+                _check(len(data)==min(size-offset,count) and _identity(os.fstat(stream.fileno())) == handle_stamp,
                        'published artifact changed during read')
             end = offset+len(data)
             return dict(identity=identity, offset=offset, bytes=size, data_b64=b64encode(data).decode('ascii'),
@@ -104,7 +112,7 @@ class DevelopmentArtifacts:
                 WHERE k.end>=k.start GROUP BY s.value ORDER BY 3 DESC, s.value LIMIT ? OFFSET ?
             """, (count+1,offset))
             rows = cursor.fetchall()
-        _check(_identity(path.lstat())==stamp, 'trace changed during kernel query')
+        _check(_identity(path.lstat())==path_stamp, 'trace changed during kernel query')
         return dict(identity=identity, offset=offset,
                     kernels=[dict(name=name, calls=calls, device_ns=ns) for name,calls,ns in rows[:count]],
                     next_offset=offset+count if len(rows)>count else None)
@@ -159,9 +167,12 @@ class HarnessAssets:
 
     def read(self, identity, offset=0, limit=None):
         _check(type(identity) is str and re.fullmatch('[0-9a-f]{64}', identity), 'invalid asset identity')
-        if identity not in self.assets.files:
-            self.assets.publish(self.root / identity, kind='harness_asset', label=identity, expected=identity)
-        return self.assets.query('read', identity, offset, limit)
+        try:
+            if identity not in self.assets.files:
+                self.assets.publish(self.root / identity, kind='harness_asset', label=identity, expected=identity)
+            return self.assets.query('read', identity, offset, limit)
+        except FileNotFoundError:
+            raise ValueError('harness asset not found') from None
 
     def import_objects(self, source, identities):
         for identity in identities:

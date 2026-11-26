@@ -247,9 +247,9 @@ class EngineeringWorker(NativeWorker):
         root.mkdir(mode=0o700)
         traffic = root / 'inputs'
         stage_inputs(traffic, {**timing.files, 'workload.json':canonical(plan), 'inputs.json':canonical(inputs)})
-        service = ProfileService(timing.service_spec, mode='e0_graph', docker=timing.host.docker,
-                                 diagnostics=root/'service-diagnostics')
         try:
+            service = ProfileService(timing.service_spec, mode='e0_graph', docker=timing.host.docker,
+                                     diagnostics=root/'service-diagnostics')
             with self.exclusive(deadline), service.start(deployment, 'ee-l3-job-'+root.name, deadline) as live:
                 timing.observer(live, traffic, root, min(deadline-90, began+DURATION-5),
                                 script='observe_text_timing.py')

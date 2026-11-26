@@ -6,20 +6,56 @@ from tempfile import TemporaryDirectory
 from base64 import b64decode
 from contextlib import closing
 from io import BytesIO
+from os import environ
 import sqlite3
 from threading import Event, Thread
 from unittest import TestCase
 from unittest.mock import patch
 
 from evolveengine.v3_harness import canonical, digest
-from evolveengine.v3_level3_artifacts import DevelopmentArtifacts, PAGE_BYTES
+from evolveengine.v3_level3_artifacts import DevelopmentArtifacts, HarnessAssets, PAGE_BYTES
 from evolveengine.v3_level3_run import OPS, WorkerResult
 from evolveengine.v3_level3_source import SourceContract
 from evolveengine.v3_level3_worker_channel import (
     REPLY, REQUEST, WorkerChannelError, WorkerClient, WorkerLease, _binding, _get, _send, serve,
 )
 from evolveengine.v3_level3_worker_spool import SpoolIO, bridge, spool_path
-from evolveengine.v3_level3_worker_ssh import _worker_command
+from evolveengine.v3_level3_worker_ssh import _worker_command, _worker_target
+
+
+class WorkerTargetTests(TestCase):
+    def test_operator_settings_are_required_and_supply_the_host_pin(self):
+        with patch.dict(environ, {}, clear=True):
+            with self.assertRaisesRegex(WorkerChannelError, 'configure a trusted Worker host'):
+                _worker_target()
+        settings = {
+            'EE_L3_WORKER_SSH_HOST': 'worker.example.invalid',
+            'EE_L3_WORKER_SSH_USER': 'operator',
+            'EE_L3_WORKER_SSH_ED25519': 'SHA256:' + 'a' * 43,
+        }
+        with patch.dict(environ, settings, clear=True):
+            self.assertEqual(_worker_target(), ('worker.example.invalid', 'operator', 'a' * 43))
+            for fingerprint in ('', 'untyped', 'SHA256:short'):
+                with patch.dict(environ, {'EE_L3_WORKER_SSH_ED25519': fingerprint}):
+                    with self.assertRaises(WorkerChannelError):
+                        _worker_target()
+
+
+class HarnessAssetTests(TestCase):
+    def test_missing_asset_is_a_tool_error_and_does_not_prevent_later_reads(self):
+        with TemporaryDirectory() as directory:
+            assets = HarnessAssets(directory)
+            data = b'committed harness asset'
+            identity = digest(data)
+            with self.assertRaisesRegex(ValueError, 'harness asset not found'):
+                assets.read(identity)
+
+            path = Path(directory) / identity
+            path.write_bytes(data)
+            self.assertEqual(b64decode(assets.read(identity)['data_b64']), data)
+            path.unlink()
+            with self.assertRaisesRegex(ValueError, 'harness asset not found'):
+                assets.read(identity)
 
 
 class Worker:

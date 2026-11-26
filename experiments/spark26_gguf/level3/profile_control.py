@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import sys
 from time import monotonic, monotonic_ns, sleep, time_ns
+from types import SimpleNamespace
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -23,7 +24,7 @@ sys.path.insert(0,str(ROOT))
 from experiments.spark26_gguf.level3 import control_run as controls, native_controls, node_preflight as node, replay_e0, worker_stdio
 from evolveengine.v3_harness import canonical, digest
 from evolveengine.v3_level3_collect import DockerObserver, artifact_space, identity, stage_inputs, write, write_rows
-from evolveengine.v3_level3_deploy import GRAPH_PROFILES, LAUNCH, WEIGHT, DockerService, StartedService, launch_args, runtime_container_args, stage_deployment, validate_container
+from evolveengine.v3_level3_deploy import GRAPH_PROFILES, IMMEDIATE_GRAPH_WIRE, LAUNCH, WEIGHT, DockerService, StartedService, launch_args, runtime_container_args, stage_deployment, validate_container
 from evolveengine.v3_level3_evidence import _columns, _measure, _sqlite_trace, file_sha256
 from evolveengine.v3_level3_gb10 import docker_command, docker_env
 
@@ -81,8 +82,9 @@ def trace_args(profile, mode):
     if mode == 'e0':
         need(profile == 'diagnostic_eager', 'E0 kernel control requires the eager runtime profile')
         return TRACE_ARGS
-    need(profile in ('decode_graph', 'graph_defaults'), 'Graph trace requires a registered Graph profile')
-    launch = tuple(arg for arg in LAUNCH if arg not in GRAPH_PROFILES[profile])
+    need(profile in ('decode_graph', 'graph_defaults', IMMEDIATE_GRAPH_WIRE),
+         'Graph trace requires a registered Graph profile')
+    launch = launch_args(SimpleNamespace(launch_profile=profile))
     # Collect device execution for each whole host-launched graph. The GB10
     # hardware-only trace captured host submissions but lacked the device rows.
     return (*SOFTWARE_TRACE_OPTIONS, '--cuda-graph-trace=graph:host-only', '--', 'python', *launch)

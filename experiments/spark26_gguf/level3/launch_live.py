@@ -9,7 +9,9 @@ import json
 from math import isfinite
 import os
 from pathlib import Path
+import re
 from sqlite3 import Error as SqliteError
+import sys
 from time import monotonic, time_ns
 
 # Reuse the pinned relay, tokenizer and profile exercised with real Pi.
@@ -154,6 +156,36 @@ def write(path, obj):
         os.fsync(out.fileno())
 
 
+def observed_stream(response, path, attempt, *, clock=monotonic, utc_now=cfg.utc_now):
+    """Publish redacted transport activity without affecting model settlement."""
+    temporary = path.with_suffix('.tmp')
+    opened_utc = utc_now()
+    last_data_utc = None
+    data_frames = 0
+
+    def publish():
+        try:
+            temporary.write_bytes(canonical(dict(attempt=attempt, opened_utc=opened_utc,
+                last_data_utc=last_data_utc, data_frames=data_frames))+b'\n')
+            temporary.replace(path)
+        except OSError:
+            pass  # This observational record cannot reject an otherwise usable response.
+
+    publish()
+    last_publish = clock()
+    for line in response:
+        if isinstance(line, bytes) and line.startswith(b'data:'):
+            data_frames += 1
+            last_data_utc = utc_now()
+            now = clock()
+            if data_frames == 1 or now-last_publish >= 15:
+                publish()
+                last_publish = now
+        yield line
+    if data_frames:
+        publish()
+
+
 def controller_pins():
     modules = ('deepseek.py', 'journal.py', 'v3_context_control.py', 'v3_harness.py', 'v3_runner.py', 'v3_provider.py',
                'v3_level3_weight_audit.py', 'v3_level3_artifacts.py', 'v3_level3_build.py', 'v3_level3_chat_timing.py', 'v3_level3_collect.py', 'v3_level3_components.py',
@@ -235,7 +267,7 @@ def audit(approval, *, config_path=None):
     plan = json.loads(raw)
     keys = {'schema','scope','acceptance_sha256','controller_sha256','config_sha256','runtime_sha256',
             'allowed_resources','evidence','holdout','worker','corpus_sha256'}
-    need(type(plan) is dict and keys <= set(plan) <= keys | {'seed_candidate'} and plan['schema'] == SCHEMA
+    need(type(plan) is dict and keys <= set(plan) <= keys | {'seed_candidate', 'worker_implementation'} and plan['schema'] == SCHEMA
          and plan['scope'] in (REVIEWED_SCOPE, ENGINEERING_SCOPE) and raw == canonical(plan)+b'\n', 'invalid live admission')
     acceptance = ACCEPTANCE.read_bytes()
     need(plan['acceptance_sha256'] == digest(acceptance) == ACCEPTANCE_SHA
@@ -289,17 +321,25 @@ def audit(approval, *, config_path=None):
         sr=witnesses['split_quality_registration']; result=witnesses['split_quality_controls']
         from pathlib import PurePosixPath
         rr=PurePosixPath(worker['authorization']).parent
+        report_path = PurePosixPath(worker['report'])
         need(sr['sha256']==controls['split_quality']['sha256'] and
              controls['split_quality']['path']==str(rr/'split/registration.json') and
              worker['entry']==str(rr/'src/experiments/spark26_gguf/level3/worker_stdio.py') and
-             worker['registration']==str(rr/'registration.json') and worker['report']==str(rr/'live-worker'),
+             worker['registration']==str(rr/'registration.json') and report_path.parent == rr
+             and re.fullmatch(r'live-worker(?:-[a-z0-9][a-z0-9-]{0,39})?', report_path.name),
              'split registration, Worker source and report must share the qualified node root')
         registered=split.read_registration(Path(sr['path']),sr['sha256'],lease['baseline_sha256'],tc)
-        # Check a copied baseline and the local source against the exact node overlay.
+        # A distinct controller revision can bind the already-qualified Worker manifest.
+        # worker_stdio independently checks the deployed source before the handshake.
         from experiments.spark26_gguf.level3 import node_preflight
         base_path=Path(ref['path']).parent.parent/'registration.json'
         base=json.loads(pinned(dict(path=str(base_path),sha256=lease['baseline_sha256'])))
-        split.verify_overlay(base['implementation_sha256'],node_preflight.implementation_pins(),registered)
+        worker_implementation = plan.get('worker_implementation')
+        if 'worker_implementation' in plan:
+            need(type(worker_implementation) is dict, 'invalid qualified Worker manifest')
+        else:
+            worker_implementation = node_preflight.implementation_pins()
+        split.verify_overlay(base['implementation_sha256'], worker_implementation, registered)
         control_root=Path(result['path']).parent
         accepted=json.loads(pinned(result,cap=128<<10))
         split_controls.verify(control_root,accepted,baseline=lease['baseline_sha256'],cal=tc,
@@ -309,6 +349,7 @@ def audit(approval, *, config_path=None):
         need(frozen['authorization']==pin and caught['case_outcomes']['autoregressive_full_vocab']=='fail',
              'the production lease or negative control did not exercise the split gate')
     else:
+        need('worker_implementation' not in plan, 'a distinct Worker manifest requires qualified split development')
         need('split_quality' not in (lease.get('controls') or {}),'split quality is registered only for thinking-chat development')
     need(plan['allowed_resources'] == dict(server='spark-c3bc', paid_deepseek=True, paid_research=open_research,
          formal_w=False, holdout_disclosure=False), 'missing scoped resource authorization')
@@ -651,18 +692,23 @@ def execute(output, approval, archive, tokenizer, corpus_path, credential, *, co
                 pass
 
     @contextmanager
-    def send(wire, timeout):
+    def send(wire, timeout, directory, attempt):
         # This marker requires an accepted real upstream connection from the
         # exploration itself. API probes and local simulations use other entrypoints.
         with upstream(wire, timeout) as response:
             marker = launch_dir/'deepseek-started.json'
             if not marker.exists():
                 write(marker, dict(started_utc=cfg.utc_now(), upstream_sha256=digest(wire), scope=plan['scope']))
-            yield response
+            yield observed_stream(response, directory/'stream-progress.json', attempt)
 
     def lease_factory(active_limits, segment, fragments):
-        item = cfg.ExplorationLease(active_limits, send, counter, config['model']['context_window'],
-              launch_dir/f'model-segment-{segment:04d}', api_cost=cost,
+        directory = launch_dir/f'model-segment-{segment:04d}'
+
+        def transport_with_progress(wire, timeout):
+            return send(wire, timeout, directory, item.attempts)
+
+        item = cfg.ExplorationLease(active_limits, transport_with_progress, counter, config['model']['context_window'],
+              directory, api_cost=cost,
               model_socket_idle_seconds=transport['relay_socket_idle_seconds'], expected_prompt_fragments=fragments)
         if objective:
             item.require_full_generation_window = False
@@ -678,8 +724,8 @@ def execute(output, approval, archive, tokenizer, corpus_path, credential, *, co
                        dependencies=launch_dir/'run'/'harness-assets' if continuous else None)
 
     try:
-        transport = durable_ssh_worker if continuous else ssh_worker
-        with transport(contract, credential=credential, **worker_args) as worker:
+        connect_worker = durable_ssh_worker if continuous else ssh_worker
+        with connect_worker(contract, credential=credential, **worker_args) as worker:
             phase = 'run'
             result = explore(launch_dir/'run', contract, TimedWorker(worker, op_records, start, leases, cost), launch,
                   lease_factory, runtime, CONTINUOUS_PROMPT if continuous else PROMPT, limits,

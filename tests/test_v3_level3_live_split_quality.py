@@ -19,6 +19,18 @@ class LiveSplitRegistrationTests(TestCase):
         with self.assertRaisesRegex(ValueError,'unregistered'):
             split.verify_overlay(old,new,{'implementation_overlay':row['implementation_overlay']|{'some-unrelated-driver':['same','same']}})
 
+    def test_profile_repair_must_be_registered_with_the_exact_worker_hash(self):
+        profile, = split.OPTIONAL_OVERLAY_CHANGES
+        base = dict.fromkeys(split.OVERLAY_CHANGES | {profile}, 'original')
+        live = dict.fromkeys(base, 'repaired')
+        changes = {path: [base[path], live[path]] for path in split.OVERLAY_CHANGES}
+        with self.assertRaisesRegex(ValueError, 'unregistered'):
+            split.verify_overlay(base, live, {'implementation_overlay': changes})
+        changes[profile] = [base[profile], live[profile]]
+        self.assertIsNone(split.verify_overlay(base, live, {'implementation_overlay': changes}))
+        with self.assertRaisesRegex(ValueError, 'unregistered'):
+            split.verify_overlay(base, live | {profile: 'different'}, {'implementation_overlay': changes})
+
     def test_shadow_status_never_counts_as_live(self):
         groups={k:dict(status='valid',violations=[],insufficient=[]) for k in SPLIT_CASES}
         row=dict(protocol=SPLIT_PROTOCOL,live_gate=False,status='valid',groups=groups)

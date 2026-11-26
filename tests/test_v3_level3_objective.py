@@ -16,6 +16,27 @@ with patch.object(sys, 'path', [str(SCRIPTS), *sys.path]):
     from pi_runtime import cfg
 
 
+class LiveStreamObservationTests(TestCase):
+    def test_live_stream_publishes_frame_progress_without_storing_payload(self):
+        with patch.object(sys, 'path', [str(SCRIPTS), *sys.path]):
+            from launch_live import observed_stream
+
+        frames = [b': keepalive\n', b'data: first-private-delta\n', b'data: second-private-delta\n']
+        with TemporaryDirectory() as directory:
+            progress = Path(directory) / 'progress.json'
+            times = iter(['opened', 'first', 'second'])
+            source = observed_stream(frames, progress, 4, clock=lambda: 0, utc_now=lambda: next(times))
+            self.assertEqual(next(source), frames[0])
+            self.assertEqual(json.loads(progress.read_bytes()), dict(
+                attempt=4, opened_utc='opened', last_data_utc=None, data_frames=0))
+            self.assertEqual(next(source), frames[1])
+            self.assertEqual(json.loads(progress.read_bytes())['data_frames'], 1)
+            self.assertEqual(list(source), frames[2:])
+            self.assertEqual(json.loads(progress.read_bytes()), dict(
+                attempt=4, opened_utc='opened', last_data_utc='second', data_frames=2))
+            self.assertEqual(list(observed_stream(frames, progress/'unwritable', 5)), frames)
+
+
 class ObjectiveAdmissionTests(TestCase):
     def setUp(self):
         self.config, self.limits = cfg.validate_objective_config(json.loads(
