@@ -79,8 +79,8 @@ class Lifecycle:
     """
 
     def __init__(self, journal: Journal, *, verify_artifact, verify_quality, verify_measure,
-                 verify_wip, max_recoveries: int):
-        _need(type(max_recoveries) is int and max_recoveries >= 0, 'invalid recovery cap')
+                 verify_wip, max_recoveries: int | None):
+        _need(max_recoveries is None or type(max_recoveries) is int and max_recoveries >= 0, 'invalid recovery cap')
         self.journal = journal
         self.verify_artifact = verify_artifact
         self.verify_quality = verify_quality
@@ -167,7 +167,7 @@ class Lifecycle:
                 _need(abnormal_cause in RECOVERABLE, 'failure is not recoverable')
                 attempts = sum(row.get('kind') == 'recovery' and row['id'].endswith('/start')
                                for row in self.journal.events(ROOT + 'segment/'))
-                _need(attempts < self.max_recoveries, 'recovery cap reached')
+                _need(self.max_recoveries is None or attempts < self.max_recoveries, 'recovery cap reached')
                 kind = 'recovery'
             successor = segment + 1
             continuation = dict(checkpoint=identity, kind=kind, cause=abnormal_cause)
@@ -179,17 +179,27 @@ class Lifecycle:
         key = self._open(segment)
         return self.load(self.journal.get_event(key + 'start')['checkpoint'])
 
-    def finish(self, segment: int, engine: QualifiedEngine, *, active_harness: str) -> dict:
+    def finish(self, segment: int, engine: QualifiedEngine, *, active_harness: str, pending_review=False) -> dict:
         """Seal the Agent's explicit choice; never select from timings or include WIP."""
         with self.journal.transaction():
             key = self._open(segment)
             self._qualified(engine)
             self._verify('harness', active_harness)
-            final = dict(kind='delivered', chosen=asdict(engine), active_harness=active_harness,
+            final = dict(kind='weight_review_nomination' if pending_review else 'delivered', chosen=asdict(engine), active_harness=active_harness,
                          segment=segment)
-            self.journal.event(ROOT + 'delivery', final)
+            self.journal.event(ROOT + ('weight_review_nomination' if pending_review else 'delivery'), final)
             self.journal.event(key + 'end', final)
             return final
+
+    def nominate(self, segment, engine, checkpoint, *, active_harness, score, cold_verified):
+        self._open(segment)
+        self._qualified(engine)
+        state = self.load(checkpoint)
+        _need(state.harness == _ref(active_harness), 'stage checkpoint needs the active Harness')
+        row = dict(kind='stage_proposal', chosen=asdict(engine), checkpoint=checkpoint,
+                   active_harness=active_harness, segment=segment, score=score, cold_verified=cold_verified)
+        self.journal.event(ROOT + f'segment/{segment}/proposal', row)
+        return row
 
     def stop(self, segment: int, *, cause: str) -> None:
         """Close without a delivery. A stop records no fabricated performance value."""

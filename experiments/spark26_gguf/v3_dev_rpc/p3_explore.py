@@ -11,14 +11,17 @@ from unittest.mock import patch
 
 import p3_narrow as narrow
 from p3_narrow import p3, node_client
-from evolveengine.v3_provider import LeaseError
+from evolveengine.v3_provider import LeaseError, MeteredLimits
 from evolveengine.v3_runner import LONG_MODEL_OUTPUT, LONG_MODEL_REQUEST
 
 CONFIG = p3.HERE / 'exploration.json'
 
 
 def load_config(path):
-    config = p3.record(path)
+    return validate_config(p3.record(path))
+
+
+def validate_config(config):
     model = config['model']
     budget = config['budget']
     transport = config['transport']
@@ -53,6 +56,31 @@ def load_config(path):
             'expected metering and the tested truncation policy')
     config = dict(config, transport=dict(transport, relay_socket_idle_seconds=relay_idle))
     return config, limits
+
+
+def validate_objective_config(config):
+    """Separate admission contract for Level 3 engineering; frozen experiments use validate_config."""
+    model, transport = config['model'], config['transport']
+    keys = {'input_tokens','output_tokens','model_requests','wall_seconds','gpu_node_seconds',
+            'development_calls','api_cost_rmb'}
+    p3.need(config['policy'] == 'objective_v1' and set(config['budget']) == keys and
+            all(value is None for value in config['budget'].values()), 'objective exploration requires metered totals')
+    p3.need((model['id'], model['thinking'], model['reasoning_effort']) ==
+            ('deepseek-flash','enabled','max'), 'unexpected objective model profile')
+    cap, context = model['max_output_tokens'], model['context_window']
+    margin, minimum = model['context_margin_tokens'], model['minimum_generation_tokens']
+    p3.need(all(type(x) is int for x in (cap, context, margin, minimum)) and
+            0 < minimum <= cap <= LONG_MODEL_OUTPUT and 0 < margin and
+            cap + margin < context <= 1_000_000, 'invalid dynamic context policy')
+    p3.need(type(transport['request_bytes']) is int and 0 < transport['request_bytes'] <= LONG_MODEL_REQUEST and
+            all(type(transport[key]) is int and 0 < transport[key] <= 1800 for key in
+                ('upstream_idle_seconds','relay_socket_idle_seconds')), 'invalid transport parameters')
+    failures = config['termination']['max_consecutive_failures']
+    continuous = config['termination'].get('continuous_exploration', False)
+    p3.need(type(continuous) is bool and config['termination']['stop_on_explicit_finish'] is (not continuous)
+            and type(failures) is int and failures > 0
+            and config['accounting']['record_all_costs'] is True, 'missing metering or stop policy')
+    return config, MeteredLimits(None,None,None,None,cap,transport['request_bytes'])
 
 
 def utc_now():
@@ -126,6 +154,39 @@ def estimate_rmb(usage):
         estimates[period] = dict(lower=str((low+completion*output_rate)/quot),
                                  upper=str((high+completion*output_rate)/quot))
     return estimates
+
+
+class UsageLedger:
+    """Count requests and cache-aware tariff estimates without a cumulative admission threshold."""
+    def __init__(self):
+        self.lock = Lock()
+        self.open_requests = 0
+        self.settled_requests = 0
+        self.estimates = {period: {bound: Decimal(0) for bound in ('lower','upper')}
+                          for period in FLASH_RMB_RATES}
+
+    def reserve(self, meta, persist):
+        with self.lock:
+            persist(dict(input_bound=meta['input_bound'], output_bound=meta['output_bound'],
+                         policy='meter_after_dispatch'))
+            self.open_requests += 1
+
+    def settle(self, row):
+        estimate = estimate_rmb(row)
+        with self.lock:
+            if estimate is not None:
+                self.open_requests -= 1
+                self.settled_requests += 1
+                for period, bounds in estimate.items():
+                    for bound, amount in bounds.items():
+                        self.estimates[period][bound] += Decimal(amount)
+
+    def snapshot(self):
+        with self.lock:
+            return dict(policy='meter_after_dispatch', settled_requests=self.settled_requests,
+                        unresolved_requests=self.open_requests,
+                        estimated_rmb={p:{k:str(v) for k,v in values.items()}
+                                       for p,values in self.estimates.items()})
 
 
 class ExplorationLease(narrow.NarrowLease):

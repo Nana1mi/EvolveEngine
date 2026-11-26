@@ -1,0 +1,38 @@
+{
+  "policy": "objective_v1",
+  "weight_audit": "q8-external-review-v1",
+  "scoring": "interactive-tpot-thinking-chat-v4",
+  "research": "deepseek_open_v1",
+  "guest_resources": {"cpus": 16, "memory_mib": 10240, "tmp_mib": 1024, "pids": 512},
+  "model": {
+    "id": "deepseek-flash",
+    "thinking": "enabled",
+    "reasoning_effort": "max",
+    "context_window": 1000000,
+    "max_output_tokens": 393216,
+    "context_margin_tokens": 1024,
+    "minimum_generation_tokens": 8192
+  },
+  "budget": {
+    "input_tokens": null,
+    "output_tokens": null,
+    "model_requests": null,
+    "wall_seconds": null,
+    "gpu_node_seconds": null,
+    "development_calls": null,
+    "api_cost_rmb": null
+  },
+  "transport": {
+    "request_bytes": 16777216,
+    "upstream_idle_seconds": 1800,
+    "relay_socket_idle_seconds": 900
+  },
+  "accounting": {
+    "record_all_costs": true
+  },
+  "termination": {
+    "max_consecutive_failures": 3,
+    "continuous_exploration": true,
+    "stop_on_explicit_finish": false
+  }
+}

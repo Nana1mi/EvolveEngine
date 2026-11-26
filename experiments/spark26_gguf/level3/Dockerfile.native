@@ -1,0 +1,23 @@
+# Dedicated build-only image; inputs prepared by the trusted provisioning lane.
+# BASE is a local tag whose immutable image ID is verified before and after.
+ARG BASE
+FROM ${BASE}
+USER 0:0
+ENV PYTHONPATH="" NVIDIA_VISIBLE_DEVICES=void PIP_NO_INDEX=1 TZ=UTC
+ENV PATH=/opt/ee-native/rust/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WORKDIR /tmp
+COPY sources/ /opt/ee-native/sources/
+COPY cargo/ /opt/ee-native/cargo/
+COPY rust-toolchain/ /opt/ee-native/rust/
+COPY wheels/ /opt/ee-native/wheels/
+COPY input-manifest.json /opt/ee-native/input-manifest.json
+# Isolated Python ignores PYTHONPATH; make the pinned 2.14.1 build dependency
+# take precedence over the old torch in the runtime base's global site dir.
+RUN python3 -I -m pip --disable-pip-version-check install --no-index --no-deps --no-cache-dir \
+       --target /opt/ee-native/python /opt/ee-native/wheels/*.whl \
+    && printf '%s\n' 'import sys; sys.path[:0] = ["/opt/ee-native/python", "/opt/spark26-deps"]' \
+       > /usr/local/lib/python3.12/dist-packages/00-ee-native.pth \
+    && ln -sf /opt/ee-native/rust/bin/rustc /usr/local/bin/rustc \
+    && ln -sf /opt/ee-native/rust/bin/cargo /usr/local/bin/cargo \
+    && /opt/ee-native/rust/bin/rustc --version | grep '^rustc 1\.92\.0 ' \
+    && python3 -I -c 'import torch, scikit_build_core, setuptools_rust, setuptools_scm; assert torch.__version__.split("+")[0] == "2.14.1" and torch.__file__.startswith("/opt/spark26-deps/")'

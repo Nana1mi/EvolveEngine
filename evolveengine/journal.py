@@ -19,12 +19,14 @@ class Interrupted(Exception):
 
 
 class Journal:
-    def __init__(self, path, on_reserved=None, *, enforce_wall=False):
+    def __init__(self, path, on_reserved=None, *, enforce_wall=False, external_serialization=False):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.on_reserved = on_reserved
         self.enforce_wall = enforce_wall
         self.db = None
+        # Opt in only for a controller that serializes all connection access.
+        self.external_serialization = external_serialization
 
     def __enter__(self):
         # Separate writer lease so the journal can commit during external calls.
@@ -35,7 +37,8 @@ class Journal:
             self.lock.close()
             raise
         try:
-            self.db = sqlite3.connect(self.path, isolation_level=None)
+            self.db = sqlite3.connect(self.path, isolation_level=None,
+                                      check_same_thread=not self.external_serialization)
             self.db.row_factory = sqlite3.Row
             self.db.executescript("""
                 PRAGMA journal_mode = WAL;

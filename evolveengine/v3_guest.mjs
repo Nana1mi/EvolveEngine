@@ -32,6 +32,6 @@ for(const e of spec.templates)args.push('--prompt-template',`/input/harness/${e}
 if(spec.rpc)args.push('-e','/opt/ee/v3_rpc.mjs');
 if(spec.paged_read)args.push('-e','/opt/ee/v3_paged_read.mjs');
 args.push('--print',spec.prompt);
-const child=spawn(process.execPath,args,{cwd:'/scratch/work',stdio:['ignore','inherit','inherit'],env:{PATH:process.env.PATH,HOME:'/scratch',USERPROFILE:'/scratch',PI_CODING_AGENT_DIR:'/scratch/pi',PI_OFFLINE:'1',PI_SKIP_VERSION_CHECK:'1',NO_PROXY:'127.0.0.1',EE_TOY_GATE:'http://127.0.0.1:30091'}});
+const child=spawn(process.execPath,args,{cwd:'/scratch/work',stdio:['ignore','inherit','inherit'],env:{PATH:process.env.PATH,HOME:'/scratch',USERPROFILE:'/scratch',PI_CODING_AGENT_DIR:'/scratch/pi',PI_OFFLINE:'1',PI_SKIP_VERSION_CHECK:'1',NO_PROXY:'127.0.0.1',EE_TOY_GATE:'http://127.0.0.1:30091',...(spec.objective?{EE_L3_OBJECTIVE:'1'}:{})}});
 const code=await new Promise((yes,no)=>{child.on('error',no);child.on('exit',(r)=>yes(r??1));});
 for(const s of sockets)s.destroy();proxy.close();process.exitCode=code;

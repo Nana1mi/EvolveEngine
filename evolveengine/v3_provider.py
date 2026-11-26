@@ -62,6 +62,16 @@ class Limits:
         need(all(type(v) is int and v>0 for v in (self.input,self.output,self.turns,self.wall_ms,self.per_turn_output,self.request_bytes)), 'positive integer caps required')
 
 
+@dataclass(frozen=True)
+class MeteredLimits(Limits):
+    """Uncapped totals for a separately registered engineering exploration."""
+    def __post_init__(self):
+        need(all(v is None for v in (self.input, self.output, self.turns, self.wall_ms)),
+             'metered totals must be explicitly uncapped')
+        need(all(type(v) is int and v > 0 for v in (self.per_turn_output, self.request_bytes)),
+             'positive per-request limits required')
+
+
 def counts(usage):
     need(type(usage) is dict,'missing authoritative stream usage')
     a,b,t=(usage.get(k) for k in ('prompt_tokens','completion_tokens','total_tokens'))
@@ -120,10 +130,12 @@ class MaxLease:
 
     def __init__(self,limits,transport,*,fingerprint=None, clock=time.monotonic, expected_prompt_fragments=()):
         self.limits=limits;self.transport=transport;self.fingerprint=fingerprint;self.clock=clock
-        self.deadline=clock()+limits.wall_ms/1000;self.spent_input=self.spent_output=0;self.rows=[];self.rejections=[];self.seen_ids={};self.poisoned=False
+        self.deadline=None if limits.wall_ms is None else clock()+limits.wall_ms/1000;self.spent_input=self.spent_output=0;self.rows=[];self.rejections=[];self.seen_ids={};self.poisoned=False
         self._lock=Lock();self._expected_prompt_fragments=tuple(expected_prompt_fragments)
 
     def _left(self):
+        if self.deadline is None:
+            return float('inf')
         left=self.deadline-self.clock();need(left>0,'provider wall lease exhausted');return left
 
     def _read(self,up,ceiling):
@@ -179,8 +191,8 @@ class MaxLease:
         with self._lock:
             old_turns=len(self.rows)
             meta=dict(request_bytes=len(raw) if type(raw) is bytes else None,
-                      input_left=max(0,self.limits.input-self.spent_input),
-                      output_left=max(0,self.limits.output-self.spent_output),
+                      input_left=None if self.limits.input is None else max(0,self.limits.input-self.spent_input),
+                      output_left=None if self.limits.output is None else max(0,self.limits.output-self.spent_output),
                       input_bound=None,output_bound=None,requested_max_tokens=None,upstream_request_bytes=None,profile=None,replay=None,
                       tool_result_count=None,recent_tool_results=None)
             stage={'phase':'lease'}
@@ -205,7 +217,7 @@ class MaxLease:
         pass
 
     def _do(self,raw,meta,stage):
-        need(not self.poisoned and len(self.rows)<self.limits.turns,'provider lease unavailable')
+        need(not self.poisoned and (self.limits.turns is None or len(self.rows)<self.limits.turns),'provider lease unavailable')
         self._left()
         stage['phase']='request_size';need(type(raw) is bytes and 0<len(raw)<=self.limits.request_bytes,'model request size')
         stage['phase']='parse'
@@ -228,14 +240,18 @@ class MaxLease:
         bound=self._input_ceiling(req,tools,meta)
         need(type(bound) is int and bound>0,'input reservation unavailable')
         meta['input_bound']=bound
-        cap=min(self.limits.per_turn_output,self.limits.output-self.spent_output)
+        cap=self.limits.per_turn_output
+        if self.limits.output is not None:
+            cap=min(cap,self.limits.output-self.spent_output)
         if self.context_window is not None:
-            cap = min(cap, self.context_window - bound)
+            cap = min(cap, self.context_window - bound - getattr(self, 'context_margin', 0))
         if 'max_tokens' in req:
             asked=req['max_tokens'];need(type(asked) is int and asked>0,'invalid turn output request')
             meta['requested_max_tokens']=asked;cap=min(cap,asked)
         meta['output_bound']=cap
-        need(bound<=self.limits.input-self.spent_input,'text or output token reservation exceeds remaining cap')
+        need(self.limits.input is None or bound<=self.limits.input-self.spent_input,'text or output token reservation exceeds remaining cap')
+        if getattr(self, 'minimum_generation', 0):
+            need(cap >= self.minimum_generation, 'context cannot fit full generation window')
         if self.require_full_generation_window:
             full = self.limits.per_turn_output
             need(meta['requested_max_tokens'] == full and self.limits.output-self.spent_output >= full,
