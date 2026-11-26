@@ -2,12 +2,14 @@
 from datetime import datetime
 from hashlib import sha256
 import json
+from math import isclose
 from pathlib import Path
 import re
 import sqlite3
 from contextlib import closing
 
 from .schema import canonical, digest as object_digest
+from .v3_level3_scoring import weighted_score
 
 SCENES = ('W1', 'W2', 'W3', 'W4')
 METRICS = ('output_toks_per_s', 'tpot_ms', 'ttft_ms', 'e2e_ms', 'dev_score')
@@ -23,7 +25,7 @@ STATUSES = frozenset('''built valid observed violation insufficient_evidence bui
     upstream_http_error usage_uncertain input_reservation_rejected request_rejected
     worker_transport agent_delivery runtime_failure process_exit launcher_failed
     exhausted consecutive_failures lease_overrun wall_clock resource_exhausted
-    repeated_failure_paused infrastructure_repair worker_fault operator_pause unplanned_outage
+    repeated_failure_paused infrastructure_repair worker_fault operator_pause operator_pause_after_segment unplanned_outage
     context_generation_window network_failure guest_failure worker_failure worker_uncertain'''.split())
 FAILURES = STATUSES & frozenset('''violation insufficient_evidence build_failed cleanup_uncertain
     timeout timed_out uncertain output_replay_mismatch timed_output_mismatch workload_drift
@@ -32,7 +34,8 @@ FAILURES = STATUSES & frozenset('''violation insufficient_evidence build_failed 
     failed_or_interrupted operator_interrupted runtime_failure process_exit launcher_failed
     lease_overrun wall_clock resource_exhausted rejected repeated_failure_paused context_generation_window
     network_failure guest_failure worker_failure worker_uncertain'''.split())
-CASES = frozenset('numeric_32 natural_eos_4 autoregressive_full_vocab mixed_tail_absolute paired_cancel_numeric sampling_three_bin'.split())
+REPLAY_CASES = frozenset('numeric_32 natural_eos_4 autoregressive_full_vocab mixed_tail_absolute paired_cancel_numeric'.split())
+CASES = REPLAY_CASES | {'sampling_three_bin'}
 TOOLS = frozenset('read write edit bash grep find ls develop_build develop_quality develop_measure develop_profile develop_diagnostic candidate_submit harness_submit harness_activate harness_asset_save artifact_query checkpoint_save research_search research_read research_fetch deliver handoff'.split())
 CONTINUATIONS = frozenset(('initial', 'ordinary', 'recovery', 'stopped', 'delivered', 'nominated'))
 PINS = re.compile(r'[0-9a-f]{64}\Z')
@@ -397,6 +400,7 @@ def local_run(root, run_id):
                             node_ms=node if order and node_known and not reserved else None)
     model_rows = collect_model(out, root)
     collect_terminal(out, root, settlement)
+    collect_operator_measurements(out, root, seen)
     annotate_elapsed(out, root)
     if not model_rows:
         out['notices'].append('No projected model receipts yet.')
@@ -478,6 +482,8 @@ def collect_terminal(out, root, settlement):
         out['resources'].update({k: v for k, raw in resources.items() if (v := num(raw)) is not None}, invoice_verified=False)
     terminal = read_json(safe(root, 'run', 'result.json'), cap=16 << 20)
     out['stop_cause'] = status(terminal.get('stop_cause'))
+    if out['status'] == 'incomplete' and out['stop_cause'] == 'operator_pause_after_segment':
+        out['status'] = 'paused'
     if settlement:
         out['events'].append(event('run/settlement', 'run_settlement', status=out['status'], cause=out['stop_cause'],
                                    wall_ms=num(settlement.get('elapsed_ms')),
@@ -506,6 +512,46 @@ def collect_terminal(out, root, settlement):
             elif name == 'tool_execution_end' and (start := opened.pop(hashed, None)) is not None and stamp >= start:
                 out['events'].append(event(f'pi/{session}/{index}', 'pi_tool', session=session, operation=tool, at_ms=start/1e6,
                                            duration_ms=(stamp-start)/1e6, evidence=hashed))
+
+
+
+def collect_operator_measurements(out, root, seen):
+    """Project the host operator's optional sidecar, bound to this approval.
+
+    The sidecar lives next to the run root and never inherits its resource clock.
+    """
+    sidecar = read_json(safe(root.parent, root.name + '.observatory-operator.json'), cap=1 << 20)
+    records = sidecar.get('measurements')
+    if (sidecar.get('schema') != 'ee-observatory-operator-v1' or sidecar.get('run') != out['id']
+            or not out['source_ref'] or sidecar.get('approval_sha256') != out['source_ref']
+            or not out['baseline'] or not isinstance(records, list) or len(records) > 100):
+        return
+    published = {point['id'] for point in out['points']}
+    for row in map(mapping, records):
+        engine, receipt, build, quality, ref = (pin(row.get(key)) for key in ('engine', 'timing', 'build', 'quality', 'reference'))
+        case_results = mapping(row.get('cases'))
+        if (not all((engine, receipt, build, quality, ref)) or receipt in published or receipt == ref
+                or engine not in seen or engine == out['baseline'] or row.get('reference_engine') != out['baseline']
+                or row.get('evidence_origin') != 'operator_replay' or row.get('verdict') != 'measured'
+                or row.get('weight_audit') != 'pending_if_gain'
+                or not REPLAY_CASES <= case_results.keys() or any(v != 'pass' for v in case_results.values())):
+            continue
+        scene_ratios = ratios(row.get('ratios'))
+        reported = num(row.get('weighted_score'))
+        if set(scene_ratios) != set(SCENES) or min(scene_ratios.values()) <= 0 or reported is None:
+            continue
+        score = weighted_score(scene_ratios)
+        if not isclose(score, reported, rel_tol=1e-9):
+            continue
+        index = len(out['points']) + 1
+        out['points'].append(dict(id=receipt, engine=engine, reference=ref, iteration=seen[engine], index=index,
+                                  build=build, aggregate=score, aggregate_kind='weighted_score', ratios=scene_ratios,
+                                  scenes={}, reference_scenes={}, provisional=True, known_quality=True, quality=quality,
+                                  origin='operator_replay'))
+        out['events'].append(event(f'operator/{receipt}', 'operator_measurement', 'verified', engine=engine,
+                                   evidence=receipt, point_id=receipt, point_index=index, iteration=seen[engine],
+                                   build=build, status='observed'))
+        published.add(receipt)
 
 
 TIMELINE_KINDS = frozenset(('pause', 'resume', 'infrastructure_change', 'infrastructure_fault'))

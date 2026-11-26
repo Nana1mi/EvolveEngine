@@ -85,6 +85,40 @@ class ProjectionTest(unittest.TestCase):
         self.assertTrue(any(e.get('failure') and e.get('status') == 'build_failed' for e in s['events']))
         self.assertTrue(any('1 unbound' in n for n in s['notices']))
 
+    def test_operator_measurement_is_bound_distinct_and_idempotent(self):
+        approval = 'e'*64
+        write(self.root/'registration.json', dict(REGISTRATION, approval_sha256=approval))
+        write(self.root/'settlement.json', dict(status='incomplete', elapsed_ms=100))
+        write(self.root/'run'/'result.json', dict(stop_cause='operator_pause_after_segment'))
+        with Journal(self.db) as db:
+            work(self.root, db, 1, 'develop_measure', E0, R0, 'observed')
+            ev(db, 'reference', 'development_reference', evidence=R0, engine=E0)
+            ev(db, 'candidate', 'engine_registered', engine=E1, parent=E0)
+            work(self.root, db, 2, 'develop_measure', E1, R1, 'observed')
+            ev(db, 'comparison', 'development_comparison', engine=E1, receipt=R1,
+               reference=R0, weighted_score=1.02, scene_ratios={'W1': 1.02})
+        row = dict(engine=E1, reference_engine=E0, timing=R2, build=B1, quality=Q1, reference=R0,
+                   cases=dict.fromkeys(projection.REPLAY_CASES, 'pass'), ratios=dict.fromkeys(projection.SCENES, 1.11),
+                   verdict='measured', evidence_origin='operator_replay', weight_audit='pending_if_gain',
+                   weighted_score=1.11, remote_report=SECRET, wall_ms=42)
+        sidecar = self.root.with_name(self.root.name + '.observatory-operator.json')
+        self.addCleanup(sidecar.unlink, missing_ok=True)
+        doc = dict(schema='ee-observatory-operator-v1', run='example', approval_sha256=approval,
+                   measurements=[dict(row, timing='b'*64, weighted_score=9), dict(row, timing=R1), row, row])
+        write(sidecar, dict(doc, approval_sha256='f'*64))
+        self.assertEqual([p['id'] for p in self.snapshot()['points']], [R1])
+        write(sidecar, doc)
+        s = self.snapshot()
+        self.assertEqual([p['id'] for p in s['points']], [R1, R2])
+        point = s['points'][1]
+        self.assertEqual((point['index'], point['origin'], point['aggregate_kind']), (2, 'operator_replay', 'weighted_score'))
+        self.assertTrue(point['provisional'])
+        self.assertAlmostEqual(point['aggregate'], 1.11)
+        self.assertNotIn('resources', point)
+        self.assertIsNone(s['delivery'])
+        self.assertEqual([e['point_id'] for e in s['events'] if e['kind'] == 'operator_measurement'], [R2])
+        self.assertEqual((s['status'], s['stop_cause']), ('paused', 'operator_pause_after_segment'))
+
     def test_harness_recovery_is_not_load_or_success(self):
         with Journal(self.db) as db:
             db.event('level3/segment/1/start', dict(kind='initial', checkpoint=CP))

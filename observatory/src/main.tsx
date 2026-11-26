@@ -17,7 +17,7 @@ const pages = [...nav[0].items, ...nav[1].items]
 const isPage = (s:string):s is Page => pages.some(([p])=>p===s)
 const statusStyle = (s:string) => ['valid','built','delivered','observed','complete','pass'].includes(s) ? 'good' :
   ['violation','build_failed','runtime_failure','fail','upstream_transport','worker_transport','length','rejected','generation_truncated','launcher_failed','failed_or_interrupted'].includes(s) ? 'bad' :
-  ['incomplete','insufficient_evidence','uncertain','pending_review','reserved','started','no_terminal_receipt','usage_uncertain'].includes(s) ? 'warn' : 'muted'
+  ['incomplete','paused','insufficient_evidence','uncertain','pending_review','reserved','started','no_terminal_receipt','usage_uncertain'].includes(s) ? 'warn' : 'muted'
 
 function Badge({ children, tone='muted' }: { children:ReactNode; tone?:string }) {
   return <span className={`badge ${tone}`}><i/>{children}</span>
@@ -97,7 +97,7 @@ function EventList({ rows, selected, onClick, filter=false }: {rows:EventRow[]; 
 function PointTable({ data, selected, onClick }: {data:Snapshot;selected?:string;onClick:(id:string)=>void}) {
   if(!data.points.length)return <Empty title="No measured candidates" text="Failed or unmeasured attempts stay in the event log."/>
   return <div className="table-scroll"><table className="table"><thead><tr><th>Engine / measurement</th><th>Paired E0</th><th>W1</th><th>W2</th><th>W3</th><th>W4</th><th>Wall</th><th>Evidence</th></tr></thead><tbody>
-    {[...data.points].reverse().map(p=><tr key={p.id} className={selected===p.id?'row-selected':''}><td><button className="event-link" onClick={()=>onClick(p.id)}><span className="event-mark verified"><GitBranch size={14}/></span><span><strong>E{p.iteration} · Pair {p.pair??'—'}</strong><small className="mono">{short(p.engine)}</small></span></button></td>
+    {[...data.points].reverse().map(p=><tr key={p.id} className={selected===p.id?'row-selected':''}><td><button className="event-link" onClick={()=>onClick(p.id)}><span className="event-mark verified"><GitBranch size={14}/></span><span><strong>E{p.iteration} · {p.origin==='operator_replay'?'Independent replay':`Pair ${p.pair??'—'}`}</strong><small className="mono">{short(p.engine)}</small></span></button></td>
     <td className="mono ink">{has(p.aggregate)?`${num(p.aggregate,3)}×`:'—'}</td>{['W1','W2','W3','W4'].map(k=><td className="mono" key={k}>{has(p.ratios[k])?`${num(p.ratios[k],3)}×`:'—'}</td>)}
     <td className="mono">{duration(p.resources?.wall_ms)}</td><td><Badge tone={p.provisional?'warn':'good'}>{p.provisional?'Pending audit':'Dev receipt'}</Badge></td></tr>)}
   </tbody></table></div>
@@ -124,11 +124,12 @@ function Inspector({ point, row, snapshot, onNavigate, dismiss }: {point?:Point;
         ...(row.cases?Object.entries(row.cases).map(([k,v])=>[words(k),<Badge tone={statusStyle(v)}>{words(v)}</Badge>] as [string,ReactNode]):[]),
       ]}/><p className="side-note">Only allowlisted receipt metadata. Raw inputs, outputs and local paths are not available here.</p>
     </div>:point?<div className="inspector-content">
-      <div className="inline-badges"><Badge tone={point.provisional?'warn':'good'}>{point.provisional?'Pending audit':'Development receipt'}</Badge>{snapshot.delivery?.engine===point.engine&&<Badge tone="violet">Agent selected engine</Badge>}</div>
+      <div className="inline-badges"><Badge tone={point.provisional?'warn':'good'}>{point.provisional?'Weight audit pending':'Development receipt'}</Badge>{point.origin==='operator_replay'&&<Badge>Independent replay</Badge>}{snapshot.delivery?.engine===point.engine&&<Badge tone="violet">Agent selected engine</Badge>}</div>
       <div className="inspector-value"><strong>{num(point.aggregate,3)}<em>{has(point.aggregate)?'×':''}</em></strong><span>vs. paired E0 · {point.aggregate_kind==='weighted_score'?'registered weighted score':'equal-scene geomean'}</span></div>
       <div className="tabs"><button className={tab==='evidence'?'selected':''} onClick={()=>setTab('evidence')}>Evidence</button><button className={tab==='scenes'?'selected':''} onClick={()=>setTab('scenes')}>W1–W4</button></div>
       {tab==='evidence'?<KeyValues entries={[
         ['Engine',<Hash value={point.engine}/>],['Build',<Hash value={point.build}/>],['Measurement',<Hash value={point.id}/>],['Paired reference',<Hash value={point.reference}/>],['Quality',quality?<Badge tone={statusStyle(quality.status??'')}>{words(quality.status)}</Badge>:point.known_quality?'Development qualified':'Not recorded'],
+        ...(point.quality?[['Quality receipt',<Hash value={point.quality}/>] as [string,ReactNode]]:[]),
         ['Wall time',duration(point.resources?.wall_ms)],['Session',point.session??'—'],
       ]}/>:<div className="scenes">{['W1','W2','W3','W4'].map(s=><div key={s}><div><b>{s}</b><small>{num(point.scenes[s]?.output_toks_per_s,2)} {has(point.scenes[s]?.output_toks_per_s)?'tok/s':''}</small></div><span>{has(point.ratios[s])?`${num(point.ratios[s],3)}×`:'—'}</span></div>)}</div>}
       <div className="inspector-links"><button onClick={()=>onNavigate('trace')}><Activity size={15}/>Trace <ArrowRight size={13}/></button><button onClick={()=>onNavigate('evaluation')}><ShieldCheck size={15}/>Evaluation <ArrowRight size={13}/></button><button onClick={()=>onNavigate('engine')}><GitBranch size={15}/>Lineage <ArrowRight size={13}/></button></div>
@@ -186,8 +187,8 @@ function Lineage({ s, type, select, showOverview }: {s:Snapshot;type:'engine'|'h
 }
 function Export({s}: {s:Snapshot}) {
   function download(){
-    const columns=['measurement','engine','build','paired_reference','pair','metric_method','development_ratio','W1_ratio','W2_ratio','W3_ratio','W4_ratio','wall_ms','effective_ms','node_ms','settled_input_at_dispatch','settled_output_at_dispatch','ledger_rmb_at_dispatch','provisional']
-    const rows=s.points.map(p=>[p.id,p.engine,p.build,p.reference,p.pair,p.aggregate_kind,p.aggregate,p.ratios.W1,p.ratios.W2,p.ratios.W3,p.ratios.W4,p.resources?.wall_ms,p.resources?.effective_ms,p.resources?.node_ms,p.resources?.input_tokens,p.resources?.output_tokens,p.resources?.ledger_rmb,!!p.provisional])
+    const columns=['measurement','engine','build','paired_reference','pair','metric_method','development_ratio','W1_ratio','W2_ratio','W3_ratio','W4_ratio','wall_ms','effective_ms','node_ms','settled_input_at_dispatch','settled_output_at_dispatch','ledger_rmb_at_dispatch','provisional','origin']
+    const rows=s.points.map(p=>[p.id,p.engine,p.build,p.reference,p.pair,p.aggregate_kind,p.aggregate,p.ratios.W1,p.ratios.W2,p.ratios.W3,p.ratios.W4,p.resources?.wall_ms,p.resources?.effective_ms,p.resources?.node_ms,p.resources?.input_tokens,p.resources?.output_tokens,p.resources?.ledger_rmb,!!p.provisional,p.origin??'controller'])
     const url=URL.createObjectURL(new Blob([[columns,...rows].map(x=>x.join(',')).join('\r\n')+'\r\n'],{type:'text/csv'}))
     const a=document.createElement('a');a.href=url;a.download=`${s.id}-development-measurements.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
   }
@@ -221,15 +222,17 @@ function App() {
   const visible = s?.points.filter(p=>!replay||p.index<=replay)??[]
   const aggregateKind=visible.findLast(p=>has(p.aggregate))?.aggregate_kind
   const chartData=metric==='aggregate'?visible.filter(p=>p.aggregate_kind===aggregateKind):visible
-  const currentAxis=axis ?? (visible.some(p=>has(xvalue(p,'effective_ms')))?'effective_ms':visible.some(p=>has(xvalue(p,'wall_ms')))?'wall_ms':'index')
+  const latest=chartData.at(-1)
+  const currentAxis=axis ?? (latest?.origin==='operator_replay' ? 'index' :
+    visible.some(p=>has(xvalue(p,'effective_ms')))?'effective_ms':visible.some(p=>has(xvalue(p,'wall_ms')))?'wall_ms':'index')
   const p=visible.find(p=>p.id===selected)??visible.findLast(p=>s?.delivery?.point_id===p.id)??visible.at(-1)
   const m=metricList.find(v=>v.key===metric)!
   const best=chartData.filter(p=>has(yvalue(p,metric,scene))).reduce<Point|undefined>((acc,p)=>!acc||
     (m.high?Number(yvalue(p,metric,scene))>Number(yvalue(acc,metric,scene)):Number(yvalue(p,metric,scene))<Number(yvalue(acc,metric,scene)))?p:acc,undefined)
-  const referenceIn=s?.events.filter(e=>e.kind==='comparison').find(e=>e.point_id===p?.id)
+  const referenceIn=s?.events.find(e=>e.point_id===p?.id && ['comparison','operator_measurement'].includes(e.kind))
   const events = s?.events??[]
   const sessions=new Set(events.map(e=>e.session).filter(has))
-  const summaryEvents=events.filter(e=>['comparison','engine_registered','harness_submit','harness_activate','delivery','run_settlement','checkpoint_saved','pause','resume','infrastructure_change'].includes(e.kind)||e.failure)
+  const summaryEvents=events.filter(e=>['comparison','operator_measurement','engine_registered','harness_submit','harness_activate','delivery','run_settlement','checkpoint_saved','pause','resume','infrastructure_change'].includes(e.kind)||e.failure)
   const traceEngine=selectedRow?.engine??p?.engine
   const scoped=(rows:EventRow[])=>scope&&traceEngine?rows.filter(e=>e.engine===traceEngine):rows
   const chartAxisOptions=axisList.map(a=>({...a,disabled:a.key!=='index'&&!visible.some(p=>has(xvalue(p,a.key)))}))
@@ -251,13 +254,13 @@ function App() {
         <div className="top-actions"><span className={`connection ${connection==='Following receipts'?'following':''}`}><Radio size={14}/>{connection}</span>
           {runs.length>0&&<Drop label="Choose run" value={run} onChange={choose} options={runs.map(v=>({key:v.id,label:v.label}))}/>}</div></header>
       <main id="main-content">
-        <div className="hero"><div><div className="eyebrow hero-kicker"><i/> LEVEL 3 <span>/</span> ENGINEERING EXPLORATION</div><h1>{text.title}</h1><p>{text.subtitle}</p></div>{s&&<div className="hero-actions"><Badge tone={statusStyle(s.status)}>{s.status==='no_terminal_receipt'?'No settlement yet':words(s.status)}</Badge><Export s={s}/></div>}</div>
+        <div className="hero"><div><div className="eyebrow hero-kicker"><i/> LEVEL 3 <span>/</span> ENGINEERING EXPLORATION</div><h1>{text.title}</h1><p>{text.subtitle}</p></div>{s&&<div className="hero-actions"><Badge tone={statusStyle(s.status)}>{s.status==='no_terminal_receipt'?'No settlement yet':s.status==='paused'&&s.stop_cause==='operator_pause_after_segment'?'Paused after segment':words(s.status)}</Badge><Export s={s}/></div>}</div>
         {!s?<section className="card"><Empty title={error||listError||(!info&&runs.length===0?'Waiting for run data':'Reading run evidence')} text={info?'The UI does not request or start experiments.':'Register a controller run or load the local archive if available.'}/></section>:
         <>
         {page==='overview'&&<>
           <div className="stats">
             <Stat icon={Cpu} label="Engine versions" value={s.versions.length} hint={s.delivery ? `Agent decision: ${short(s.delivery.engine)}` : 'No explicit delivery recorded'} accent="teal"/>
-            <Stat icon={ChartNoAxesCombined} label={metric==='aggregate'?'Best development ratio':`Best ${m.label.toLowerCase()}`} value={best?`${num(yvalue(best,metric,scene),m.unit==='×'?3:2)}${m.unit==='×'?'×':` ${m.unit}`}`:'—'} hint={best?`E${best.iteration} · Pair ${best.pair??'—'} · ${best.provisional?'pending audit':'development only'}`:'No comparable measurement'} accent="violet"/>
+            <Stat icon={ChartNoAxesCombined} label={metric==='aggregate'?'Best development ratio':`Best ${m.label.toLowerCase()}`} value={best?`${num(yvalue(best,metric,scene),m.unit==='×'?3:2)}${m.unit==='×'?'×':` ${m.unit}`}`:'—'} hint={best?`E${best.iteration} · ${best.origin==='operator_replay'?'independent replay':`Pair ${best.pair??'—'}`} · ${best.provisional?'weight audit pending':'development only'}`:'No comparable measurement'} accent="violet"/>
             <Stat icon={Clock3} label="Wall time" value={duration(s.resources.wall_ms)} hint={`Node time: ${duration(s.resources.node_ms)}`} accent="blue"/>
             <Stat icon={AudioLines} label="Model requests" value={num(s.resources.requests,0)} hint={`${compact(s.resources.input_tokens)} input · ${compact(s.resources.output_tokens)} output`} accent="amber"/>
           </div>
@@ -266,6 +269,7 @@ function App() {
               <div className="chart-subline"><span>{m.label} {metric==='aggregate'?`· ${aggregateKind==='weighted_score'?'Registered weighted score':'Equal-scene geomean'}`:''}</span>{metric!=='aggregate'&&<div className="scene-toggle" aria-label="Workload">{['W1','W2','W3','W4'].map(a=><button className={scene===a?'selected':''} key={a} aria-pressed={scene===a} onClick={()=>setScene(a)}>{a}</button>)}</div>}</div>
               <Curve points={chartData} selected={selectedRow?undefined:p?.id} metric={metric} axis={currentAxis} scene={scene} onSelect={select} delivered={s.delivery?.point_id} infrastructure={events.flatMap(e=>{const x=currentAxis==='effective_ms'?e.effective_ms:currentAxis==='wall_ms'?e.wall_ms:undefined;return e.kind==='infrastructure_change'&&has(x)?[{x,label:`Infra ${short(e.evidence)}`}]:[]})}/>
               <CurveLegend/>
+              {chartData.some(p=>p.origin==='operator_replay'&&!has(xvalue(p,currentAxis)))&&<p className="side-note">Independent replay is available on the measurement-order axis. <button className="text-button" onClick={()=>setAxis('index')}>Show measurement order</button></p>}
               <Tracks rows={events} data={chartData} axis={currentAxis} onClick={view}/>
               {s.points.length>1&&<div className="replay"><History size={15}/><label htmlFor="replay">Measure replay</label><input id="replay" type="range" min={1} max={s.points.length} value={replay??s.points.length} onChange={e=>{const n=Number(e.target.value);setReplay(n===s.points.length?undefined:n);setSelectedRow(undefined)}}/><span>{visible.length}/{s.points.length}</span><button className="text-button" disabled={!replay} onClick={()=>setReplay(undefined)}>Latest</button></div>}
             </Section>

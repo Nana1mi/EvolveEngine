@@ -15,7 +15,7 @@ export type Point = {
   reference?: string; aggregate?: Num; aggregate_kind: 'weighted_score' | 'equal_scene_geomean';
   ratios: Record<string, number>; scenes: Record<string, Record<string, number>>;
   reference_scenes: Record<string, Record<string, number>>; resources?: Record<string, Num>;
-  provisional?: boolean; known_quality: boolean;
+  provisional?: boolean; known_quality: boolean; quality?: string; origin?: 'operator_replay';
 }
 export type Snapshot = RunInfo & {
   revision: string; schema_version: number; status: string; stop_cause?: string; source_ref?: string;
@@ -37,7 +37,7 @@ export const yuan = (n: unknown) => has(n) ? `¥${n.toFixed(2)}` : '—'
 export const timestamp = (n: number) => new Intl.DateTimeFormat('en-GB', {timeZone:'Asia/Hong_Kong', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23'}).format(n)
 export const sourceName: Record<Source,string> = { verified:'Verified receipt', host:'Host observed', agent:'Agent decision' }
 export const eventNames: Record<string,string> = {
-  comparison:'Development measurement', worker_reserved:'Worker reservation', worker_settled:'Worker result',
+  comparison:'Development measurement', operator_measurement:'Independent replay', worker_reserved:'Worker reservation', worker_settled:'Worker result',
   worker_uncertain:'Uncertain Worker settlement', run_settlement:'Run settlement', delivery:'Agent nomination',
   reference:'Development reference', engine_registered:'Engine registered', session_start:'Session boundary',
   session_end:'Session ended', segment_started:'Agent session started', segment_settled:'Agent session settled',
