@@ -18,7 +18,7 @@ from .v3_level3_web_research import SCOPE as WEB_SCOPE, WebResearch
 from . import v3_level3_scoring as business, v3_level3_weight_audit as weights
 from .v3_level3_workload import FIRST_LIVE_PAIR
 from .v3_provider import GENERATION_TRUNCATED
-from .v3_runner import Gateway, need
+from .v3_runner import Gateway, MAX_REPLY, RpcAudit, exception_details, need
 
 EMPTY = dict(prompts=[], skills=[], extensions=[], workflows=[], memory=[])
 OPS = frozenset({'develop_build', 'develop_quality', 'develop_measure', 'develop_profile', 'develop_diagnostic'})
@@ -134,6 +134,7 @@ class Run:
         self.receipts, self.builds, self.facts, self.drafts = {}, {}, {}, {}
         self.jobs, self.events = [], []
         self.worker_invalid, self.pending = False, None
+        self.rpc_unsettled = False
         self.lifecycle = Lifecycle(journal, verify_artifact=self._artifact, verify_quality=self._quality,
                                    verify_measure=self._measure, verify_wip=self._wip, max_recoveries=None if deadline is None else 1)
 
@@ -557,11 +558,13 @@ class Run:
         pointer.replace(folder/'latest')
 
     @contextmanager
-    def handler(self, segment, state):
+    def handler(self, segment, state, *, audit=None):
         parent = self.drafts[state.wip][1] if state.wip else state.engine.engine
         jobs = {}
         active = None
         background = None
+        synchronous_worker = Event()
+        worker_routes = OPS | {'develop_stress','confirm_performance','confirm_cold_build','diagnostic_submit'}
 
         def process(op, args):
             nonlocal active, background
@@ -580,7 +583,7 @@ class Run:
                 return 409, dict(status='worker_busy', job=active)
             if op == 'submit_job' and self.scoring:
                 need(set(args) == {'operation','arguments'} and args['operation'] in
-                     (CORE | {'diagnostic_submit','develop_profile','develop_stress','confirm_performance','confirm_cold_build'})
+                     (worker_routes - {'develop_diagnostic'})
                      and type(args['arguments']) is dict, 'unsupported background job')
                 name, values = args['operation'], args['arguments']
                 active = f'{segment}-{len(jobs)+1}'
@@ -588,41 +591,75 @@ class Run:
                 jobs[active] = job
 
                 def execute_job():
+                    start = monotonic()
+                    status, result = 500, dict(error='BackgroundJobAborted')
+                    detail = {}
                     try:
-                        status, result = self._rpc(name, values, segment, parent, cancelled=job['cancel'])
-                    except (ValueError, KeyError, TypeError, OSError, RuntimeError, PermissionError) as exc:
-                        status = 400
-                        result = dict(error=str(exc)[:240] if type(exc) is ValueError else type(exc).__name__)
-                    with job['lock']:
-                        job.update(status='settled', http_status=status, result=result,
-                                   stop_requested=job['cancel'].is_set())
+                        if audit is not None:
+                            audit(event='background_started',tool=name,job=job['job'])
+                        code, reply = self._rpc(name, values, segment, parent, cancelled=job['cancel'])
+                        if type(code) is not int or not 100 <= code <= 599 or len(canonical(reply)) > MAX_REPLY-1024:
+                            raise RuntimeError('invalid background job response envelope')
+                        status, result = code, reply
+                    except (ValueError, KeyError, TypeError, PermissionError) as exc:
+                        status, result = 400, dict(error=type(exc).__name__)
+                    except Exception as exc:
+                        status, result = 500, dict(error=type(exc).__name__)
+                        detail = exception_details(exc)
+                    finally:
+                        with job['lock']:
+                            job.update(status='settled' if 200 <= status < 300 else 'failed', http_status=status,
+                                       result=result, stop_requested=job['cancel'].is_set())
+                        if audit is not None:
+                            audit(event='background_finished',tool=name,job=job['job'],status=status,
+                                  duration_ms=round((monotonic()-start)*1000),**detail)
 
                 background = Thread(target=execute_job, name=f'level3-worker-{active}')
-                background.start()
+                try:
+                    background.start()
+                except Exception as exc:
+                    job.update(status='failed', http_status=500, result=dict(error=type(exc).__name__))
+                    background = None
+                    raise
                 return 202, dict(job=active, operation=name, status='running')
+            if op in worker_routes:
+                synchronous_worker.set()
             try:
                 return self._rpc(op, args, segment, parent)
-            except (ValueError, KeyError, TypeError, RuntimeError, PermissionError) as e:
+            except (ValueError, KeyError, TypeError, PermissionError) as e:
                 self._event('tool_refused', tool=op, error=type(e).__name__)
                 return 400, dict(status='denied', error=str(e)[:240] if type(e) is ValueError else type(e).__name__)
+            finally:
+                synchronous_worker.clear()
         upload = Upload(process, objective=bool(self.scoring))
         lock = Lock()
-        closed = False
+        closed = Event()
 
         def dispatch(op, args):
             with lock:
-                need(not closed and self.pending is None and (not self.worker_invalid or op == 'job_status')
+                need(not closed.is_set() and self.pending is None and (not self.worker_invalid or op == 'job_status')
                      and (self.deadline is None or monotonic() < self.deadline), 'segment ended or unavailable')
                 return upload(op, args)
 
+        def worker_active():
+            job_thread = background
+            return synchronous_worker.is_set() or (job_thread is not None and job_thread.is_alive())
+
+        dispatch.worker_active = worker_active
         try:
             yield dispatch
         finally:
-            # Relay owns this callback while Pi runs. Drain any in-flight RPC before
-            # the controller resumes journal access and permanently revoke the handle.
-            with lock:
-                closed = True
-                upload.close()
+            # Revoke new calls immediately. An arbitrary stuck host callback
+            # cannot be killed in-process; report uncertainty instead of hanging
+            # here or handing off while it can still mutate the old segment.
+            closed.set()
+            if lock.acquire(timeout=1):
+                try:
+                    upload.close()
+                finally:
+                    lock.release()
+            else:
+                self.rpc_unsettled = True
             if background is not None:
                 background.join()
 
@@ -907,9 +944,14 @@ def explore(output, contract, worker, launcher, lease_factory, runtime, prompt, 
             if continuous:
                 state._event('segment_started', segment=segment, checkpoint=last, engine=entry.engine.engine, harness=entry.harness)
             entry_prompt = prompt + f'\n\nSegment {segment}. Verified Engine: {entry.engine.engine}. Active Harness: {entry.harness}. Use facts for current state.'
+            gateway = None
+            # Separate append-only stream; do not put exception stacks into Pi or its public trace.
+            audit = RpcAudit(output/f'rpc-segment-{segment:03}.jsonl')
+            def job_audit(**record):
+                gateway._audit(**record)
             try:
-                with state.handler(segment, entry) as dispatch:
-                    gateway = Gateway(lease, dispatch, delivery_complete=lambda: state.pending is not None)
+                with state.handler(segment, entry, audit=job_audit) as dispatch:
+                    gateway = Gateway(lease, dispatch, delivery_complete=lambda: state.pending is not None, audit=audit)
                     report = launcher(state.engines[entry.engine.engine], current, entry_prompt, gateway,
                                       seconds=None if left is None else left//1000, draft=draft)
             except KeyboardInterrupt:
@@ -919,7 +961,16 @@ def explore(output, contract, worker, launcher, lease_factory, runtime, prompt, 
             except (ValueError, RuntimeError, OSError, SubprocessError) as exc:
                 failure = type(exc).__name__
                 state._event('launcher_failed', segment=segment, error=failure)
-                report = dict(launcher_failure=failure, provider_rows=lease.rows, gateway_events=gateway.events)
+                report = dict(launcher_failure=failure, provider_rows=lease.rows,
+                              gateway_events=gateway.events if gateway is not None else [])
+            if state.rpc_unsettled:
+                # The callback can still own the journal. Do not publish a new
+                # segment or write to the same journal from this thread. The outer
+                # launcher settles conservatively from already durable receipts.
+                (output/'runtime-quarantine.json').write_bytes(canonical(dict(
+                    stop_cause='trusted_rpc_unsettled', segment=segment, checkpoint=last,
+                    watchdog_fault=report.get('watchdog_fault'), launcher_failure=report.get('launcher_failure')))+b'\n')
+                raise RuntimeError('trusted RPC did not drain; operator reconciliation required')
             spent_input += lease.spent_input
             spent_output += lease.spent_output
             spent_requests += len(lease.rows)
@@ -931,8 +982,11 @@ def explore(output, contract, worker, launcher, lease_factory, runtime, prompt, 
                 best = state.historical_best()
                 state._event('segment_settled', segment=segment, harness=entry.harness, best=best,
                              model_usage=row['cumulative'], trace_object=trace_object, trace_sha256=digest(canonical(row)))
-            clean = (all(report.get(k) is True for k in ('isolated_state_removed', 'socket_removed', 'unchanged_install'))
-                     and not report.get('transport_fault') and not report.get('timed_out') and not state.worker_invalid)
+            resources_clean = (all(report.get(k) is True for k in ('isolated_state_removed','socket_removed','unchanged_install'))
+                               and report.get('relay_settled') is not False and report.get('pi_reader_settled') is not False
+                               and not report.get('timed_out') and not state.worker_invalid)
+            watchdog = report.get('watchdog_fault')
+            clean = resources_clean and not (watchdog or report.get('transport_fault'))
             terminated = clean and report.get('pi_exit') == 0 and not report.get('pi_errors')
             if continuous and terminated:
                 previous_failure, consecutive_failures = None, 0
@@ -972,9 +1026,15 @@ def explore(output, contract, worker, launcher, lease_factory, runtime, prompt, 
                 continue
             recover = ((_fresh_segment_recovery(lease) if deadline is None else _recovery(lease))
                         if clean and not state.pending else None)
+            if watchdog:
+                watchdog_cleanup = resources_clean and all(report.get(k) is True for k in ('relay_settled','pi_reader_settled'))
+                state._event('guest_watchdog', segment=segment, fault=watchdog, cleanup_verified=watchdog_cleanup)
+                if watchdog_cleanup and not state.pending and all(row.get('usage') == 'settled' for row in lease.rows):
+                    recover = 'guest_failure'
             if deadline is None and recover in RECOVERABLE:
-                # New model turns or an explicit handoff break a streak of failures without progress.
-                progressed = any(r.get('result') == 'complete' for r in lease.rows)
+                # For a guest failure, model turns alone are not recovery progress.
+                progressed = (state.latest_checkpoint != last if recover == 'guest_failure' else
+                              any(r.get('result') == 'complete' for r in lease.rows))
                 consecutive_failures = consecutive_failures + 1 if recover == previous_failure and not progressed else 1
                 previous_failure = recover
                 if consecutive_failures >= consecutive_failure_limit:
@@ -1005,6 +1065,8 @@ def explore(output, contract, worker, launcher, lease_factory, runtime, prompt, 
             else:
                 if state.worker_invalid:
                     reason = 'worker_uncertain'
+                elif report.get('relay_settled') is False:
+                    reason = 'trusted_rpc_unsettled'
                 elif lease.rows and lease.rows[-1].get('usage') == 'usage_uncertain':
                     reason = 'usage_uncertain'
                 elif report.get('timed_out'):

@@ -13,8 +13,9 @@ import re
 import secrets
 import subprocess
 import tempfile
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 import time
+from collections import deque
 
 from .v3_harness import canonical, digest, relative
 from .v3_provider import LeaseError
@@ -47,40 +48,124 @@ def launch(name):
     return ['--name',name,'--network','none','--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','160','--memory','768m','--cpus','1']
 
 
+def exception_details(error):
+    # Stack frames only: exception messages, source text, locals and arguments can
+    # contain API keys, prompts, private paths, or adversarial tool data.
+    stack = deque(maxlen=24)
+    frame = error.__traceback__
+    while frame is not None:
+        code = frame.tb_frame.f_code
+        stack.append(dict(file=Path(code.co_filename).name, line=frame.tb_lineno, function=code.co_name))
+        frame = frame.tb_next
+    return dict(error=type(error).__name__,stack=list(stack))
+
+
+class RpcAudit:
+    """Trusted metadata-only JSONL, separate from Pi, score evidence and the dashboard."""
+    def __init__(self, path):
+        self.path, self.lock = Path(path), Lock()
+
+    def __call__(self, **entry):
+        with self.lock, self.path.open('ab') as stream:
+            stream.write(canonical(dict(at_ns=time.time_ns(), **entry))+b'\n')
+
+
 class Gateway:
-    def __init__(self,provider,handler,token=None,*,delivery_complete=None):
+    def __init__(self,provider,handler,token=None,*,delivery_complete=None,audit=None):
         self.provider=provider;self.handler=handler;self.token=token or secrets.token_urlsafe(26)
         self.events=[]
         self.delivery_complete=delivery_complete
+        self.audit=audit
+        self.active_tool=None
+        self.sequence=0
+        self.audit_failed=False
+
+    def _audit(self, **record):
+        if self.audit is not None:
+            try:
+                self.audit(**record)
+            except Exception as exc:
+                if not self.audit_failed:
+                    self.audit_failed=True
+                    self.events.append(dict(kind='audit_unavailable',error=type(exc).__name__))
+
+    def _fault(self, route, exc, **fields):
+        detail = exception_details(exc)
+        # Diagnostics are not copied into segment reports, guest replies or the public trace.
+        self.events.append(dict(kind='infrastructure_error',route=route,error=detail['error'],**fields))
+        self._audit(event='infrastructure_error',route=route,**fields,**detail)
+
+    def background_audit(self, **entry):
+        self._audit(**entry)
+
+    def stalled_tool(self, seconds):
+        active=self.active_tool
+        return bool(active and time.monotonic()-active[1] >= seconds and
+                    not getattr(self.handler, 'worker_active', lambda: False)())
 
     def dispatch(self,path,raw,auth):
         if path=='/v1/chat/completions':
             if not isinstance(auth,str) or not hmac.compare_digest(auth,'Bearer '+self.token):
                 self.events.append(dict(kind='denied',route='provider'));return 403,'application/json',b'{"denied":true}'
-            if self.delivery_complete and self.delivery_complete():
-                self.events.append(dict(kind='stopped',route='provider',reason='agent_delivered'))
-                terminal = dict(model='deepseek-flash', choices=[dict(index=0,delta={},finish_reason='stop')])
-                return 200,'text/event-stream',b'data: '+canonical(terminal)+b'\n\ndata: [DONE]\n\n'
-            try:return 200,'text/event-stream',self.provider.exchange(raw)
+            try:
+                if self.delivery_complete and self.delivery_complete():
+                    self.events.append(dict(kind='stopped',route='provider',reason='agent_delivered'))
+                    terminal = dict(model='deepseek-flash', choices=[dict(index=0,delta={},finish_reason='stop')])
+                    return 200,'text/event-stream',b'data: '+canonical(terminal)+b'\n\ndata: [DONE]\n\n'
+                body = self.provider.exchange(raw)
+                need(type(body) is bytes, 'invalid model response type')
+                return 200,'text/event-stream',body
             except (ValueError,LeaseError):
                 self.events.append(dict(kind='denied',route='provider_protocol_or_budget'));return 400,'application/json',b'{"error":"model request unavailable"}'
-        if re.fullmatch(r'/rpc/[a-z_]{1,40}',path):
+            except Exception as exc:
+                self._fault('provider',exc)
+                return 500,'application/json',b'{"error":"model infrastructure error"}'
+        if isinstance(path,str) and re.fullmatch(r'/rpc/[a-z_]{1,40}',path):
+            return self._tool(path[5:],raw)
+        self.events.append(dict(kind='denied',route='unregistered'));return 404,'application/json',b'{"denied":true}'
+
+    def _tool(self, tool, raw):
+        self.sequence+=1
+        call=self.sequence
+        start=time.monotonic()
+        self.active_tool=(call,start)
+        self._audit(event='tool_started',call=call,tool=tool)
+        status=500
+        try:
             if self.delivery_complete and self.delivery_complete():
                 self.events.append(dict(kind='stopped',route='tool',reason='agent_delivered'))
-                return 409,'application/json',b'{"error":"agent already delivered"}'
+                status=409
+                return status,'application/json',b'{"error":"agent already delivered"}'
             try:
                 data=json.loads(raw);need(type(data) is dict,'RPC requires an object')
-                status, result=self.handler(path[5:],data)
-                return status,'application/json',canonical(result)
+                code, result=self.handler(tool,data)
             except (ValueError,KeyError,TypeError,PermissionError):
-                self.events.append(dict(kind='denied',route='tool_request'));return 403,'application/json',b'{"denied":true}'
-        self.events.append(dict(kind='denied',route='unregistered'));return 404,'application/json',b'{"denied":true}'
+                self.events.append(dict(kind='denied',route='tool_request'))
+                status=403
+                return status,'application/json',b'{"denied":true}'
+            body=canonical(result)
+            if type(code) is not int or not 100 <= code <= 599 or len(body) > MAX_REPLY:
+                raise RuntimeError('invalid tool response envelope')
+            status=code
+            return status,'application/json',body
+        except Exception as exc:
+            self._fault('tool',exc,call=call,tool=tool)
+            return status,'application/json',b'{"error":"tool infrastructure error","status":"infrastructure_error"}'
+        finally:
+            self._audit(event='tool_finished',call=call,tool=tool,status=status,
+                        duration_ms=round((time.monotonic()-start)*1000))
+            self.active_tool=None
+
+
+class RelayUnsettled(RuntimeError):
+    pass
 
 
 class Relay:
     """Bounded sequence-numbered stdio transport; sidecar gets no host network or keys."""
     def __init__(self,bridge_name,image,volume,gateway):
         self.ready=Event();self.dispatch=gateway.dispatch;self.error=None;self.count=0
+        self.gateway=gateway
         limits = getattr(gateway.provider, 'limits', None)
         self.frame_limit = MAX_FRAME
         self.model_reply_limit = MAX_REPLY
@@ -121,7 +206,10 @@ class Relay:
                     self.proc.stdin.write(canonical(dict(reply, body=base64.b64encode(body).decode('ascii'))) + b'\n')
                 self.proc.stdin.flush()
                 self.count += 1
-        except (ValueError,KeyError,OSError,TypeError,RuntimeError) as e:self.error=type(e).__name__;self.ready.set()
+        except Exception as exc:
+            self.error=type(exc).__name__
+            self.ready.set()
+            self.gateway._fault('relay',exc)
 
     def wait(self):
         need(self.ready.wait(22) and self.proc.poll() is None and not self.error,'relay unavailable')
@@ -129,8 +217,12 @@ class Relay:
     def close(self):
         try:self.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:self.proc.kill();self.proc.wait(timeout=5)
-        self.thread.join(8);self.proc.stdin.close();self.proc.stdout.close();self.err.close()
-        need(not self.thread.is_alive(),'trusted operation did not settle')
+        self.thread.join(8)
+        if self.thread.is_alive():
+            # A Python callback cannot safely be killed. Do not block closing a
+            # pipe it may still own, and never start a replacement segment.
+            raise RelayUnsettled('trusted operation did not settle')
+        self.proc.stdin.close();self.proc.stdout.close();self.err.close()
 
 
 @dataclass(frozen=True)

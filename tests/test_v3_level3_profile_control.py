@@ -89,6 +89,16 @@ class ProfileControlTests(TestCase):
         self.assertEqual(command[command.index('--')+2:], tuple(launch_args(spec)))
         self.assertIn('--incremental-streaming-output', command)
 
+    def test_graph_trace_admits_new_graph_profiles_from_the_shared_registry(self):
+        from unittest.mock import patch
+        from evolveengine.v3_level3_deploy import GRAPH_PROFILES
+
+        with patch.dict(GRAPH_PROFILES, {'fixture_graph': frozenset({'--disable-decode-cuda-graph'})}):
+            self.assertNotIn('--disable-decode-cuda-graph',r.trace_args('fixture_graph','e0_graph'))
+        for profile in ('diagnostic_eager','unknown'):
+            with self.assertRaisesRegex(ValueError,'registered Graph'):
+                r.trace_args(profile,'e0_graph')
+
     def test_graph_rejects_startup_and_warm_activity(self):
         with TemporaryDirectory() as folder:
             trace = Path(folder).resolve()/'trace.sqlite'

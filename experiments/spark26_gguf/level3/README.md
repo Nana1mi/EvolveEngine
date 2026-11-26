@@ -32,6 +32,13 @@ Git 中发布的是代码、配置模板和离线测试，不包含实机回执�
 
 一次完整启动会写出 `execution-timeline.html` 和原始跨度数据。模型请求、Pi 工具、Worker 作业各有时间记录，组件构建还记录源码缓存准备、编译、验证和部署阶段。历史回执可用 `render_timeline.py RUN OUTPUT.html` 生成已有时间戳的图。
 
+### 2026-11-26 · Level 3 宿主容错（离线修复，未部署）
+
+- 模型和工具入口异常返回通用错误，不携带堆栈、参数、密钥或正文；在可信宿主的 `run/rpc-segment-NNN.jsonl` 记录工具名、调用序号、HTTP 状态、耗时和后台结算。意外异常另记异常类型与受限堆栈（文件名、行号、函数名）。该内部日志不进 Pi 或看板；HTTP 200 不等于 Worker 的质量或性能通过。`harness_asset_save` / `restore` 的实际宿主路由分别为 `harness_asset_put` / `read`。
+- 启动 Pi 后监视 Relay 健康与工具回复：Relay 退出/故障，或单个宿主工具 360 秒未回且无在途 Worker 操作时退出该 Pi；不把等模型或合法 Worker 作业算作工具超时。不释放或重启 Worker 来掩盖未知状态。只有 Pi/Relay 与隔离资源已确认清理、Worker 状态可用、模型计账已结算且没有待提交交接时，才按既有故障上限从检查点恢复。Python 回调无法安全抢占：若未排空，另存 `run/runtime-quarantine.json`，停机核对旧控制器退出、Worker 作业与费用，不再派发。
+- 运行 `python experiments/spark26_gguf/level3/operation_smoke.py` 做离线正/负例：stress、performance / cold build 确认、作业取消、依赖、资产保存/恢复宿主协议、换段、研究复用、连续提名及 trace 内核视图。脚本走真实宿主路由，替代网络及 GPU 边界，不出实机回执。下一次准入后，把 `run_cases` 绑定到一次性工程轨迹的已签收 Worker、合格候选/检查点及已发布的 trace，再做实机覆盖；不得使用在跑会话或碰留出集。
+- 不修改主方法、评分、阈值或冻结负载；不缩短上游模型空闲超时、不加付费自动重试。后者要先核对正常长推理的数据间隔及不确定请求的账单。监控可读日志、标记基础设施故障和协调合规切换，不替 Agent 写候选或提示优化方向。
+
 ### 2026-11-25 · 同一 E0 的采样驻留对照（已停）
 
 [本批结算](./evidence/thinking-chat-sampling-repair-settlement-20261125.json) 与[前批结算](./evidence/thinking-chat-controls-settlement-20261125.json)分开。前批没有完成采样；本批在 1,287.149 节点秒内完成 4 × 2,048 条采样，数值、自然 EOS、取消通过，但 E0 未通过驻留门。两个独立服务的 `ready` 均为 5,531 MiB；`post_requests` 在不含随机筛查的回放中为 5,533 MiB，含筛查时为 5,597 MiB。检查使用前者峰值 + 8 MiB，即 5,541 MiB，超出 56 MiB。已逐项复核两个阶段的服务 PID 读数；这些读数不能归因到某类分配或权重镜像。回执的 `sampling_screen.status=reference` 只标记样本来自 E0，整体为 `violation`，并未接纳为候选参照。

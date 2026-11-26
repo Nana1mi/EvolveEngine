@@ -11,11 +11,12 @@ from time import monotonic, time_ns
 import subprocess
 
 from .v3_harness import canonical, digest
-from .v3_runner import HERE, RUNNER_FILES, Relay, docker, launch, need, ro
+from .v3_runner import HERE, RUNNER_FILES, Relay, RelayUnsettled, docker, launch, need, ro
 
 RPC = HERE / 'v3_level3_rpc.mjs'
 SCRATCH = '768m'
 MEMORY = '1536m'
+TOOL_WATCHDOG_SECONDS = 360  # Below the tool relay socket idle limit (390 s).
 GUEST_FILES = {name: HERE / name for name in ('v3_guest.mjs', 'v3_paged_read.mjs')}
 GUEST_FILES['v3_rpc.mjs'] = RPC
 GUEST_DEST = {name: '/opt/ee/' + name for name in GUEST_FILES}
@@ -80,7 +81,12 @@ def _cleanup(run, side, volume, relay, report, work_volume=None):
     docker('rm', '-f', side, check=False)
     try:
         if relay is not None:
-            relay.close()
+            report['relay_settled'] = False
+            try:
+                relay.close()
+                report['relay_settled'] = True
+            except RelayUnsettled:
+                pass  # Revoke the dispatcher and block recovery until locally reconciled.
             report.update(relay_events=relay.count, transport_fault=relay.error)
     finally:
         try:
@@ -91,7 +97,31 @@ def _cleanup(run, side, volume, relay, report, work_volume=None):
                 report['isolated_state_removed'] &= docker('volume', 'rm', work_volume, check=False).returncode == 0
 
 
-def _run_pi(run, timeout, report):
+def _wait_pi(proc, timeout, report, relay):
+    deadline = None if timeout is None else monotonic()+timeout
+    while proc.poll() is None:
+        left = 1 if deadline is None else min(1,deadline-monotonic())
+        if left <= 0:
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+        fault = None
+        if relay.error or not relay.thread.is_alive() or relay.proc.poll() is not None:
+            fault = 'relay_unavailable'
+        elif relay.gateway.stalled_tool(TOOL_WATCHDOG_SECONDS):
+            fault = 'tool_reply_timeout'
+        if fault:
+            if proc.poll() is not None:
+                break
+            report['watchdog_fault'] = fault
+            # Kill only this Pi attach process here. The outer finally removes the
+            # verified per-launch Pi/relay containers and volumes, not the Worker.
+            return
+        try:
+            proc.wait(timeout=left)
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _run_pi(run, timeout, report, relay):
     """Timestamp Pi tool boundaries as Docker emits them; discard all raw message contents."""
     proc = subprocess.Popen(['docker', 'start', '-a', run], stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
@@ -129,13 +159,14 @@ def _run_pi(run, timeout, report):
     reader = Thread(target=consume, name='level3-pi-events', daemon=True)
     reader.start()
     try:
-        proc.wait(timeout=timeout)
+        _wait_pi(proc, timeout, report, relay)
         return proc
     finally:
         if proc.poll() is None:
             proc.kill()
-            proc.wait()
-        reader.join()
+            proc.wait(timeout=5)
+        reader.join(timeout=5)
+        report['pi_reader_settled'] = not reader.is_alive()
 
 
 def sandbox(images, contract, engine, snapshot, runtime, profile, base_system, prompt, gateway, *,
@@ -212,7 +243,7 @@ def sandbox(images, contract, engine, snapshot, runtime, profile, base_system, p
             left = None if seconds is None else seconds - (monotonic() - start)
             need(left is None or left > 0, 'wall budget exhausted during guest staging')
             try:
-                proc = _run_pi(run, left, report)
+                proc = _run_pi(run, left, report, relay)
             except subprocess.TimeoutExpired:
                 timed_out = True
         except KeyboardInterrupt as exc:
