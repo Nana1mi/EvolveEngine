@@ -660,13 +660,22 @@ class Bf16MigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'invalid workbuddy v2 guardrail metrics'):
             compare_dev(broken, broken)
 
-        # Verify qualify_split_worker.check_bf16 executes compare_dev on the real public receipt
+        # Verify qualify_split_worker.check_bf16 enforces WorkBuddy v2 unconditionally from protocol flag
         from experiments.spark26_gguf.level3.qualify_split_worker import check_bf16
         pub_with_auth = dict(public, output_authentication={'status': 'verified'})
-        check_bf16('positive-measure', 'observed', pub_with_auth, True, {}, '0' * 64, '0' * 64)
+        check_bf16('positive-measure', 'observed', pub_with_auth, True, {}, '0' * 64, '0' * 64, workbuddy_v2=True)
         with self.assertRaisesRegex(ValueError, 'invalid workbuddy v2 guardrail metrics'):
             check_bf16('positive-measure', 'observed',
-                       {k: v for k, v in pub_with_auth.items() if k != 'guardrails'}, True, {}, '0' * 64, '0' * 64)
+                       {k: v for k, v in pub_with_auth.items() if k != 'guardrails'}, True, {}, '0' * 64, '0' * 64,
+                       workbuddy_v2=True)
+        # Missing BOTH W5 and G64K must still be rejected when workbuddy_v2=True
+        missing_w5_and_g64k = {
+            k: ({sk: sv for sk, sv in v.items() if sk != 'W5'} if k == 'scenes' else v)
+            for k, v in pub_with_auth.items() if k != 'guardrails'
+        }
+        with self.assertRaisesRegex(ValueError, 'missing required scenes'):
+            check_bf16('positive-measure', 'observed', missing_w5_and_g64k, True, {}, '0' * 64, '0' * 64,
+                       workbuddy_v2=True)
 
     def test_p1_develop_stress_wave_count_matches_collector_and_measure(self):
         from types import SimpleNamespace

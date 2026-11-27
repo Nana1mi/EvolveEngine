@@ -421,9 +421,11 @@ def audit(approval, *, config_path=None):
         control_root=Path(result['path']).parent
         accepted=json.loads(pinned(result,cap=128<<10))
         if bf16_mode:
+            from evolveengine.v3_level3_deploy import BF16_WORKBUDDY_64K_V2
             split_controls.verify_bf16(control_root,accepted,baseline=lease['baseline_sha256'],cal=tc,
                                        split_pin=sr['sha256'],registered=registered,
-                                       has_long_ctx='anchor_long_ctx' in base)
+                                       has_long_ctx='anchor_long_ctx' in base,
+                                       workbuddy_v2=base.get('launch_profile')==BF16_WORKBUDDY_64K_V2)
         else:
             split_controls.verify(control_root,accepted,baseline=lease['baseline_sha256'],cal=tc,
                                   previous_acceptance=ref['sha256'],split_pin=sr['sha256'],registered=registered)

@@ -120,6 +120,8 @@ def run_bf16(root, baseline_path, authorization_path, authorization_pin):
     contract, e0, worker = w.make_worker(n.fresh(root/'worker'), cfg, reg, lease, authorization_pin,
                                          scope=scope, controls=controls)
     has_long_ctx = 'anchor_long_ctx' in cfg
+    from evolveengine.v3_level3_deploy import BF16_WORKBUDDY_64K_V2
+    is_wb_v2 = cfg.get('launch_profile') == BF16_WORKBUDDY_64K_V2
     engines = bf16_controls.make(contract, include_long_ctx=has_long_ctx)
     order = (
         (*BF16_ORDER, 'longctx_pos-build', 'longctx_pos-quality', 'longctx_fault-build', 'longctx_fault-quality')
@@ -152,7 +154,8 @@ def run_bf16(root, baseline_path, authorization_path, authorization_pin):
         print('settled', name, result.status, result.node_ms, verified, flush=True)
         pins[name] = write(root/(name + '.json'), dict(verified=verified, result=asdict(result)))
         rows[name] = result
-        check_bf16(name, result.status, result.data, verified, registered, ref['sha256'], cal, has_long_ctx=has_long_ctx)
+        check_bf16(name, result.status, result.data, verified, registered, ref['sha256'], cal,
+                   has_long_ctx=has_long_ctx, workbuddy_v2=is_wb_v2)
     scan = weights.static_scan(contract.base, engines['lowprec'].edits)
     n.need(any('conversion_near_persistent_storage' in x['hints'] for x in scan['locations']),
            'BF16 low-precision weight negative was not flagged by static scan')
@@ -161,7 +164,7 @@ def run_bf16(root, baseline_path, authorization_path, authorization_pin):
         schema=BF16_SCHEMA, plan=plan, receipts=pins, lowprec_scan=scan_pin, holdout=False, paid_calls=0))
 
 
-def check_bf16(name, status, data, verified, registered, split_pin, cal, *, has_long_ctx=False):
+def check_bf16(name, status, data, verified, registered, split_pin, cal, *, has_long_ctx=False, workbuddy_v2=False):
     from evolveengine.v3_level3_collect import LONG_CTX_CASE
     expected = ('built' if name.endswith('-build') else 'observed' if name.endswith('-measure')
                 else 'violation' if name in ('fault-quality', 'longctx_fault-quality') else 'valid')
@@ -170,10 +173,12 @@ def check_bf16(name, status, data, verified, registered, split_pin, cal, *, has_
         return
     if name.endswith('-measure'):
         n.need(data['output_authentication']['status'] == 'verified', 'BF16 positive measure lacked output auth')
-        from types import SimpleNamespace
-        from evolveengine.v3_level3_run import compare_dev
-        from evolveengine.v3_level3_scoring import WORKBUDDY_V2_REPLAY_SCENES
-        if set(data.get('scenes') or {}) == set(WORKBUDDY_V2_REPLAY_SCENES):
+        if workbuddy_v2:
+            from types import SimpleNamespace
+            from evolveengine.v3_level3_run import compare_dev
+            from evolveengine.v3_level3_scoring import WORKBUDDY_V2_REPLAY_SCENES
+            n.need(set(data.get('scenes') or {}) == set(WORKBUDDY_V2_REPLAY_SCENES),
+                   'BF16 WorkBuddy v2 public measure receipt missing required scenes')
             stub = SimpleNamespace(operation='develop_measure', status='observed', evidence='0' * 64, data=data)
             comp = compare_dev(stub, stub)
             n.need(set(comp.get('guardrail_ratios') or {}) == {'w4_cold_e2e', 'g64k_ttft', 'g64k_decode', 'p95_itl'},
@@ -199,7 +204,7 @@ def check_bf16(name, status, data, verified, registered, split_pin, cal, *, has_
         n.need(set(data['case_outcomes'].values()) == {'pass'}, name + ' lacked complete witnesses')
 
 
-def verify_bf16(root, acceptance, *, baseline, cal, split_pin, registered, has_long_ctx=False):
+def verify_bf16(root, acceptance, *, baseline, cal, split_pin, registered, has_long_ctx=False, workbuddy_v2=False):
     """Controller side verification for unified BF16 split controls."""
     order = (
         (*BF16_ORDER, 'longctx_pos-build', 'longctx_pos-quality', 'longctx_fault-build', 'longctx_fault-quality')
@@ -224,7 +229,8 @@ def verify_bf16(root, acceptance, *, baseline, cal, split_pin, registered, has_l
         arm, action = name.split('-')
         n.need(r['operation'] == 'develop_' + action and r['engine'] == p['identities'][arm]
                and 0 < r['node_ms'] and split.pin(r['evidence']), 'invalid BF16 control receipt')
-        check_bf16(name, r['status'], r['data'], d['verified'], registered, split_pin, cal, has_long_ctx=has_long_ctx)
+        check_bf16(name, r['status'], r['data'], d['verified'], registered, split_pin, cal,
+                   has_long_ctx=has_long_ctx, workbuddy_v2=workbuddy_v2)
         if action == 'quality':
             row = r['data']['trajectory_screen']
             n.need(r['build'] == started[arm] and row['engine'] == r['engine'] and row['service'] not in services
