@@ -89,3 +89,22 @@ Both approval plans passed `launch_live.py` audit-only verification (`{"admitted
     --archive <path\to\sglang.tar.gz> `
     --tokenizer <path\to\deepseek-flash-offline-tokenizer>
   ```
+- **BF16 WorkBuddy 64K v2 (`workbuddy-agent-serving-v2`, `10/15/25/15/15/20`, `bf16_workbuddy_64k_v2`) — RECOMMENDED**:
+  - **Scored scenes**: `W1` 10% (2K single decode), `W2` 15% (16K cold TTFT), `W3` 25% (8-session 12K hot P25 steady decode, 4 timed waves, `cached_tokens_min=11,770`), `W4_hot` 15% (6-hot+2-cold mixed hot P25 decode, cold injected at `+700ms`, 4 timed waves), `W4_cold` 15% (mixed cold TTFT), `W5` 20% (20-session 12K burst hot P20 steady decode).
+  - **Non-scored mandatory guardrails**: `w4_cold_e2e` + `unfinished_count=0`, `g64k_ttft` & `g64k_decode` (64K cold single-request), `p95_itl` (relaxed floor `0.80`).
+  - **16K & 64K long-context logprob quality gate**: E0a vs E0b calibrated (`e0e0_max_tv_upper=4.86e-7`, `e0e0_max_regret=0.0`, limits `0.02 / 0.02`); `anchor-long-ctx.json` = `585d2af297119644d8d4ccea4a380c70ea844664622cf781ce53ecaba65902f6`.
+  - Remote root: `spark-c3bc:/var/tmp/ee-l3-bf16-wbv2-20261127` (`registration.json` = `1d501d6b3259dc585c32f46af8d3861c4017fef91929b6a3f7a689553d2fd772`)
+  - Frozen workload (`W1–W5 + G64K`): `workbuddy-v2-requests.json` = `d67828213e4032c3507bec6141716f5d1b9aeb7215306119e0ced0d202baef76`
+  - 6-pair E0/E0 noise calibration (`stable=True`, scene log-envelopes `W1=0.0100, W2=0.0100, W3=0.0100, W4_cold=0.0100, W4_hot=0.0127, W5=0.0100`, guardrail log-envelopes `w4_cold_e2e=0.0100, g64k_ttft=0.0100, g64k_decode=0.0158, p95_itl=0.0209`, calibrated precision targets all `1.015`): `noise/result.json` = `d01287f589737b99f909e3a98cd75acd37e989437124993144929edb959ad306`
+  - Graph E0 replay (Decode + Prefill CUDA Graphs witnessed): `graph/replayed.json` = `2d13f0eabdabdd07ee61fa334067bdcd2e94ce161c78352a649be30a963be004`
+  - 13-step BF16 Worker qualification (`fault` caught `violation`, `lowprec` flagged FP8 copy, `longctx_pos` passed 6/6, `longctx_fault` caught exclusively by `long_context_logprob_16k_64k`, `positive-measure` verified): `qualification/acceptance.json` = `d8432f7d37de7571ac921abe7de6b5ffdbf43265b041dcc58d700b72ab79b353`
+  - Audit-only check passed (`{"admitted":true,"paid_calls":0,"worker_started":false}`):
+  ```powershell
+  python experiments/spark26_gguf/level3/launch_live.py `
+    --approval "C:\Users\rog\AppData\Local\EvolveEngine\l3-bf16-wbv2-20261127\approval-bf16-workbuddy-v2.json" `
+    --approval-sha256 fc04077798abe544abb34b2a73aa2d8fadb0498adca1486f6383c6f573d93162 `
+    --config experiments/spark26_gguf/level3/objective-exploration-bf16-workbuddy-v2.json `
+    --execute <NEW_RUN_DIR> `
+    --archive <path\to\sglang.tar.gz> `
+    --tokenizer <path\to\deepseek-flash-offline-tokenizer>
+  ```

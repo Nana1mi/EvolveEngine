@@ -20,7 +20,7 @@ from experiments.spark26_gguf.level3 import control_run, node_preflight as node
 from evolveengine.v3_harness import canonical, digest
 from evolveengine.v3_level3_build import BuildReceipt, BuildRequest, FileHash, verify_artifacts
 from evolveengine.v3_level3_collect import write
-from evolveengine.v3_level3_deploy import BF16_WORKBUDDY_64K, IMMEDIATE_GRAPH_WIRE, launch_args, stage_deployment
+from evolveengine.v3_level3_deploy import BF16_WORKBUDDY_64K, BF16_WORKBUDDY_64K_V2, IMMEDIATE_GRAPH_WIRE, launch_args, stage_deployment
 from evolveengine.v3_level3_evidence import file_sha256, validate_evidence
 
 
@@ -106,7 +106,7 @@ def run(root, registration, registration_pin, build_file, build_pin, *, build_re
           actions=('develop_quality','develop_measure'),paid_api_calls=0))
     contract,e0,backend,service,exclusive,collectors,*_ = node.setup_baseline(root,registration,registration_pin)
     write(root/'launch-argv.json',dict(profile=service.spec.launch_profile,argv=launch_args(service.spec)))
-    if service.spec.launch_profile in (IMMEDIATE_GRAPH_WIRE, BF16_WORKBUDDY_64K):
+    if service.spec.launch_profile in (IMMEDIATE_GRAPH_WIRE, BF16_WORKBUDDY_64K, BF16_WORKBUDDY_64K_V2):
         adapt_graph_delta_quality(collectors['develop_quality'])
     if chat is not None:
         collectors['develop_measure'].enable_natural_eos(chat)

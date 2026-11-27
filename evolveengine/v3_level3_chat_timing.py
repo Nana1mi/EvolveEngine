@@ -26,7 +26,8 @@ def length_map(inputs):
     return {s:tuple(tuple(map(len,w)) for w in waves) for s,waves in inputs.items()}
 
 
-def load_chat(ref, tokenizer_pin, template_pin, scenes, warm, timed, *, split='development', engine=None, workbuddy=False):
+def load_chat(ref, tokenizer_pin, template_pin, scenes, warm, timed, *, split='development', engine=None,
+              workbuddy=False, scene_warm_waves=None, scene_timed_waves=None):
     _require(type(ref) is dict and set(ref) == {'path', 'sha256'} and _sha(ref['sha256']),
              'invalid chat workload reference')
     path = Path(ref['path'])
@@ -53,8 +54,10 @@ def load_chat(ref, tokenizer_pin, template_pin, scenes, warm, timed, *, split='d
     seen_tokens, seen_sources = set(), set()
     for scene, shape in scenes.items():
         rows = doc['requests'][scene]
-        _require(type(rows) is list and len(rows) >= 2*warm+timed, 'insufficient charted chat requests')
-        if split=='generalization': _require(timed>=2,'both timed length strata required')
+        w_n = (scene_warm_waves or {}).get(scene, warm)
+        t_n = (scene_timed_waves or {}).get(scene, timed)
+        _require(type(rows) is list and len(rows) >= 2*w_n+t_n, 'insufficient charted chat requests')
+        if split=='generalization': _require(t_n>=2,'both timed length strata required')
         waves[scene] = []
         for wave_index,wave in enumerate(rows):
             _require(type(wave) is list and len(wave) == len(shape), 'chat request wave width differs')
@@ -79,18 +82,22 @@ def load_chat(ref, tokenizer_pin, template_pin, scenes, warm, timed, *, split='d
 
 class ChatSchedule:
     """Each matched pair uses the same frozen timed set in a pair-specific order."""
-    def __init__(self, waves, warm, timed, seed):
+    def __init__(self, waves, warm, timed, seed, *, scene_warm_waves=None, scene_timed_waves=None):
         self.waves, self.warm, self.timed, self.seed = waves, warm, timed, seed
+        self.scene_warm_waves = scene_warm_waves or {}
+        self.scene_timed_waves = scene_timed_waves or {}
         self.maximum = MAX_PAIRS
 
     def get(self, pair, *, replay=False):
         _require(type(pair) is int and 0 <= pair < self.maximum, 'timing pair outside registered schedule')
         inputs = {}
         for scene, waves in self.waves.items():
-            end = len(waves) if scene == 'W3' else 2*self.warm+self.timed
-            order = list(waves[2*self.warm:end])
+            w_n = self.scene_warm_waves.get(scene, self.warm)
+            t_n = self.scene_timed_waves.get(scene, self.timed)
+            end = len(waves) if (scene == 'W3' and not self.scene_timed_waves) else 2*w_n+t_n
+            order = list(waves[2*w_n:end])
             rng = Random(int(digest(canonical([SCHEMA,self.seed,scene,pair])),16))
             rng.shuffle(order)
-            warm = waves[self.warm:2*self.warm] if replay else waves[:self.warm]
+            warm = waves[w_n:2*w_n] if replay else waves[:w_n]
             inputs[scene] = warm + (list(reversed(order)) if replay else order)
         return inputs, input_fingerprints(inputs)

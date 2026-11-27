@@ -54,6 +54,40 @@ def natural_streams(prompts, stage):
         numeric.emit('natural_stream',case=f'{stage}{i}',prompt_ids=ids,stream=w)
 
 
+def long_context_logprobs(cases_doc):
+    from urllib.request import Request
+    client = build_opener(ProxyHandler({}))
+    for case_name in ('ctx16k', 'ctx64k'):
+        entry = cases_doc['cases'][case_name]
+        ids = entry['ids']
+        rid = uuid4().hex
+        body = dict(
+            rid=rid,
+            input_ids=ids,
+            sampling_params=dict(temperature=0.0, max_new_tokens=1, ignore_eos=True),
+            return_logprob=True,
+            top_logprobs_num=64,
+        )
+        req = Request('http://127.0.0.1:30091/generate', json.dumps(body).encode(), {'Content-Type': 'application/json'})
+        with client.open(req, timeout=240) as reply:
+            row = json.load(reply)
+        meta = row['meta_info']
+        if meta.get('id') != rid or meta.get('prompt_tokens') != len(ids) or meta.get('completion_tokens') != 1:
+            raise ValueError(f'long-context logprob identity or token count mismatch for {case_name}')
+        out_lp = meta['output_token_logprobs'][0]
+        top_lps = meta['output_top_logprobs'][0]
+        top_map = {str(int(tok_id)): float(lp) for lp, tok_id, *_ in top_lps}
+        numeric.emit(
+            'long_context_logprob',
+            case=case_name,
+            prompt_tokens=len(ids),
+            prompt_sha256=entry['prompt_sha256'],
+            top1_id=int(out_lp[1]),
+            top1_logprob=float(out_lp[0]),
+            top_logprobs=top_map,
+        )
+
+
 def main():
     end = monotonic() + 180
     client = build_opener(ProxyHandler({}))
@@ -87,6 +121,9 @@ def main():
     subprocess.run([sys.executable,str(Path(__file__).with_name('legacy_eos.py')),'worker-dev'],check=True)
     if streams:
         natural_streams(prompts, 'after')
+    long_ctx = Path(__file__).with_name('long-context-cases.json')
+    if long_ctx.is_file():
+        long_context_logprobs(json.loads(long_ctx.read_bytes()))
     sampling = Path(__file__).with_name('sampling-policy.json')
     if sampling.is_file():
         stochastic_samples(json.loads(sampling.read_bytes()))

@@ -34,6 +34,10 @@ BF16_OVERLAY_CHANGES = frozenset({
     'evolveengine/v3_level3_scoring.py',
     'evolveengine/v3_level3_deploy.py',
     'evolveengine/v3_level3_run.py',
+    'evolveengine/v3_level3_long_ctx.py',
+    'evolveengine/v3_level3_evidence.py',
+    'evolveengine/v3_level3_chat_timing.py',
+    'experiments/spark26_gguf/level3/repeat_e0.py',
 })
 TEACHER_SOURCE={
     'registration': {'path':'/var/tmp/ee-l3-thinking-chat.X45fJZlz/build-registration.json',
@@ -188,8 +192,11 @@ def enable(quality, settings, ref, split_ref, registration, e0, registered):
     lane.activate(ref,registration,e0.digest,split_ref=split_ref,registered=registered)
     d3_pin = settings.get('anchor_d3_sha256')
     r1_pin = settings.get('anchor_r1_sha256')
+    lc_anchor = Path(settings['anchor_long_ctx']) if 'anchor_long_ctx' in settings else None
+    lc_sha = settings.get('anchor_long_ctx_sha256')
     quality.enable_trajectory(ref['sha256'],lane.code,
         lambda rows:grade(rows,Path(settings['anchor_d3']),Path(settings['anchor_r1']),paired=True,
-                          d3_manifest=d3_pin,r1_manifest=r1_pin),
+                          d3_manifest=d3_pin,r1_manifest=r1_pin,
+                          long_ctx_anchor=lc_anchor,long_ctx_sha256=lc_sha),
         split_pin=split_ref['sha256'])
     return lane

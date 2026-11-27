@@ -16,7 +16,10 @@ from experiments.spark26_gguf.level3 import node_preflight as node, control_run,
 from evolveengine.v3_level3_collect import write
 from evolveengine.v3_level3_deploy import stage_deployment
 from evolveengine.v3_level3_evidence import file_sha256, validate_evidence
-from evolveengine.v3_level3_scoring import calibration_output_work, paired_w3_ttft, replay_agreement, REPLAY_AUDIT_MARGIN
+from evolveengine.v3_level3_scoring import (
+    GUARDRAIL_KEYS, WORKBUDDY_V2_PRIMARY_SCENES, WORKBUDDY_V2_REPLAY_SCENES, WORKBUDDY_V2_WEIGHTS,
+    calibration_output_work, paired_w3_ttft, replay_agreement, workbuddy_v2_precision_target, REPLAY_AUDIT_MARGIN,
+)
 
 SCHEMA = 'spark26-e0-repeatability-v1'
 # Alternate the order of two independently built, quality-accepted E0 deployments.
@@ -91,6 +94,63 @@ def draft(settings, registration_pin, pair_path, pair_pin, *, build_registration
 
 def summarize(pairs):
     require(len(pairs)==len(ORDER),'incomplete timing repeats; no envelope')
+    wb_v2 = bool(pairs and set(pairs[0][0].get('scenes', {})) == set(WORKBUDDY_V2_REPLAY_SCENES))
+    if wb_v2:
+        score_keys = tuple(WORKBUDDY_V2_WEIGHTS)
+        by_scene = {s: [] for s in score_keys}
+        by_guardrail = {g: [] for g in GUARDRAIL_KEYS}
+        pair_log = []
+        for seq, ((a, b), (first, second)) in enumerate(zip(ORDER, pairs), 1):
+            require((first['arm'], second['arm']) == (a, b)
+                    and all(set(row['scenes']) == set(WORKBUDDY_V2_REPLAY_SCENES) for row in (first, second)),
+                    'unexpected timing arm order or incomplete v2 scenes')
+            for s in ('W1', 'W2', 'W3', 'W5'):
+                x, y = (r['scenes'][s]['dev_score'] for r in (first, second))
+                require(all(type(v) in (int, float) and isfinite(v) and v > 0 for v in (x, y)), 'invalid E0 v2 score')
+                by_scene[s].append(log(y) - log(x))
+            xh, yh = (r['scenes']['W4']['w4_hot_decode_tps'] for r in (first, second))
+            xc, yc = (r['scenes']['W4']['w4_cold_ttft_ms'] for r in (first, second))
+            require(all(type(v) in (int, float) and isfinite(v) and v > 0 for v in (xh, yh, xc, yc)), 'invalid E0 W4 sub-scores')
+            by_scene['W4_hot'].append(log(yh) - log(xh))
+            by_scene['W4_cold'].append(log(xc) - log(yc))
+            # Guardrails (positive ratio = better)
+            xe2e, ye2e = (r['scenes']['W4']['w4_cold_e2e_ms'] for r in (first, second))
+            xgt, ygt = (r['guardrails']['G64K']['ttft_ms'] for r in (first, second))
+            xgd, ygd = (r['guardrails']['G64K']['decode_tokens_per_s'] for r in (first, second))
+            xitl = max(first['scenes'][s]['p95_itl_ms'] for s in ('W3', 'W4', 'W5'))
+            yitl = max(second['scenes'][s]['p95_itl_ms'] for s in ('W3', 'W4', 'W5'))
+            require(all(type(v) in (int, float) and isfinite(v) and v > 0
+                        for v in (xe2e, ye2e, xgt, ygt, xgd, ygd, xitl, yitl)), 'invalid E0 guardrail values')
+            by_guardrail['w4_cold_e2e'].append(log(xe2e) - log(ye2e))
+            by_guardrail['g64k_ttft'].append(log(xgt) - log(ygt))
+            by_guardrail['g64k_decode'].append(log(ygd) - log(xgd))
+            by_guardrail['p95_itl'].append(log(xitl) - log(yitl))
+            z = fsum(by_scene[s][-1] for s in score_keys) / len(score_keys)
+            pair_log.append(dict(pair=seq, order=[a, b],
+                                 scenes_log_ratio={s: by_scene[s][-1] for s in score_keys},
+                                 guardrail_log_ratio={g: by_guardrail[g][-1] for g in GUARDRAIL_KEYS},
+                                 equal_scene_geomean_ratio=exp(z), equal_scene_log_ratio=z))
+        global_peak = max(abs(r['equal_scene_log_ratio']) for r in pair_log)
+        scene_peaks = {s: max(map(abs, by_scene[s])) for s in score_keys}
+        guardrail_peaks = {g: max(map(abs, by_guardrail[g])) for g in GUARDRAIL_KEYS}
+        max_scene_v2 = 0.08
+        stable = (global_peak <= MAX_GLOBAL and max(scene_peaks.values()) <= max_scene_v2
+                  and max(guardrail_peaks.values()) <= 0.25)
+        precision_targets = {s: workbuddy_v2_precision_target(by_scene[s]) for s in WORKBUDDY_V2_PRIMARY_SCENES}
+        return dict(
+            kind='same_node_engineering_repeatability_not_confidence_interval',
+            stable=stable, pairs=pair_log,
+            observed_max_abs_log_ratio=global_peak,
+            observed_max_abs_scene_log_ratio=scene_peaks,
+            observed_max_abs_guardrail_log_ratio=guardrail_peaks,
+            descriptive_log_envelope=dict(
+                equal_scene=max(FLOOR, global_peak),
+                scenes={s: max(FLOOR, z) for s, z in scene_peaks.items()},
+            ) if stable else None,
+            guardrail_log_envelope={g: max(FLOOR, z) for g, z in guardrail_peaks.items()} if stable else None,
+            scene_precision_targets=precision_targets if stable else None,
+            formal_w_or_holdout=False,
+        )
     by_scene = {s:[] for s in SCENES}
     pair_log = []
     for seq, ((a,b), (first,second)) in enumerate(zip(ORDER,pairs),1):
@@ -160,9 +220,12 @@ def execute(root, settings, reg_pin, plan, pin):
         require({d.identity for d in deployments.values()}==lane.teacher_deployments,'calibration and restored deployments differ')
         d3_pin = settings.get('anchor_d3_sha256')
         r1_pin = settings.get('anchor_r1_sha256')
+        lc_anchor = Path(settings['anchor_long_ctx']) if 'anchor_long_ctx' in settings else None
+        lc_sha = settings.get('anchor_long_ctx_sha256')
         quality.enable_trajectory(ref['sha256'],lane.code,
             lambda rows:grade(rows,Path(settings['anchor_d3']),Path(settings['anchor_r1']),paired=True,
-                              d3_manifest=d3_pin,r1_manifest=r1_pin))
+                              d3_manifest=d3_pin,r1_manifest=r1_pin,
+                              long_ctx_anchor=lc_anchor,long_ctx_sha256=lc_sha))
         timing_mode['trajectory_calibration_sha256']=ref['sha256']
     new_quality = {}
     if prior_ref is not None:
@@ -213,6 +276,8 @@ def execute(root, settings, reg_pin, plan, pin):
                 receipt_pin = write(root/f'pair-{i}-{arm}.json',receipt)
                 require(elapsed<=cap and verdict.status=='observed','E0 timing repeat incomplete; no envelope')
                 summary = dict(arm=arm,scenes=verdict.data['scenes'],receipt=receipt_pin,node_ms=elapsed)
+                if 'guardrails' in verdict.data:
+                    summary['guardrails'] = verdict.data['guardrails']
                 if chat:
                     witnesses.append(verdict.data['_private_replay'])
                     if 'w3_requests' in verdict.data:

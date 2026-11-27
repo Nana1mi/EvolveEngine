@@ -32,6 +32,9 @@ DEV_SCORE_RULE = {'W1':'decode_tokens_per_s','W2':'decode_tokens_per_s',
                   'W3':'reciprocal_ttft_per_s','W4':'wave_output_tokens_per_s'}
 WORKBUDDY_SCORE_RULE = {'W1':'decode_tokens_per_s','W2':'reciprocal_ttft_per_s',
                         'W3':'decode_tokens_per_s','W4':'wave_output_tokens_per_s'}
+WORKBUDDY_V2_SCORE_RULE = {'W1':'decode_tokens_per_s','W2':'reciprocal_ttft_per_s',
+                           'W3':'p25_decode_tokens_per_s','W4':'workbuddy_v2_mixed',
+                           'W5':'p20_decode_tokens_per_s','G64K':'guardrail_64k'}
 REPORTS = ('cuda_gpu_trace', 'cuda_gpu_kern_sum', 'cuda_api_sum')
 COUNTER_UNAVAILABLE = {'not_requested', 'unsupported', 'permission_denied', 'no_samples',
                        'unsupported_export_schema'}
@@ -88,6 +91,9 @@ class EvidencePolicy:
     measure_input_lengths: Mapping | None = None
     score_rule: Mapping[str, str] | None = None
     workbuddy_sla: bool = False
+    workbuddy_v2: bool = False
+    scene_warm_waves: Mapping[str, int] | None = None
+    scene_timed_waves: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -358,7 +364,8 @@ def _policy(p):
           'invalid controller workload pins')
     _need(_names(p.quality_cases) and p.quality_cases and _names(p.memory_stages) and
           len(p.memory_stages) >= 2 and (p.memory_limit_bytes is None or _uint(p.memory_limit_bytes, 1)), 'invalid controller Judge coverage')
-    _need(isinstance(p.scenes, Mapping) and set(p.scenes) == {'W1', 'W2', 'W3', 'W4'} and
+    expected_scenes = {'W1', 'W2', 'W3', 'W4', 'W5', 'G64K'} if p.workbuddy_v2 else {'W1', 'W2', 'W3', 'W4'}
+    _need(isinstance(p.scenes, Mapping) and set(p.scenes) == expected_scenes and
           _uint(p.warm_waves, 1) and _uint(p.timed_waves, 1), 'invalid controller timing coverage')
     for scene, shape in p.scenes.items():
         lanes_ok = (len(shape) >= 1) if p.workbuddy_sla else (len(shape) == (4 if scene == 'W4' else 1))
@@ -480,14 +487,21 @@ def _quality(row, p, paths):
 
 
 def _measure(row, p, path):
+    from math import exp, log
     _need(row['workload_sha256'] == p.measure_workload_sha256 and row['clock'] == 'external_client_monotonic',
           'wrong independent timing workload or clock')
-    expected = {(s,i) for s in p.scenes for i in range(p.warm_waves +
-                (p.w3_timed_waves if s=='W3' and p.w3_timed_waves else p.timed_waves))}
+    def warm_for(s):
+        return (p.scene_warm_waves or {}).get(s, p.warm_waves)
+    def timed_for(s):
+        if p.scene_timed_waves and s in p.scene_timed_waves:
+            return p.scene_timed_waves[s]
+        return p.w3_timed_waves if s == 'W3' and p.w3_timed_waves else p.timed_waves
+    expected = {(s, i) for s in p.scenes for i in range(warm_for(s) + timed_for(s))}
     seen, rids, windows = set(), set(), []
     inputs, outputs = set(), {}
-    request_outputs = {s: {} for s in p.scenes}
-    private_ids = {s: {} for s in p.scenes}
+    replay_scenes = ('W1', 'W2', 'W3', 'W4', 'W5') if p.workbuddy_v2 else ('W1', 'W2', 'W3', 'W4')
+    request_outputs = {s: {} for s in replay_scenes}
+    private_ids = {s: {} for s in replay_scenes}
     concurrent = []
     w3_requests = {}
     speculative = {s: dict(reported=0, requests=0, accepted=0, proposed=0, verifies=0) for s in p.scenes}
@@ -506,12 +520,12 @@ def _measure(row, p, path):
     _need(len(waves) == len(expected), 'incomplete timing waves')
     for wave in waves:
         scene, i = wave['scene'], wave['index']
-        _need(_uint(i) and (scene, i) in expected - seen and wave['timed'] is (i >= p.warm_waves), 'invalid timing wave')
+        _need(_uint(i) and (scene, i) in expected - seen and wave['timed'] is (i >= warm_for(scene)), 'invalid timing wave')
         seen.add((scene, i))
         shape, reqs = p.scenes[scene], wave['requests']
         _need(type(reqs) is list and len(reqs) == len(shape), 'incomplete wave request coverage')
         starts, firsts, lasts, dones, ttft, tpot, lengths = [], [], [], [], [], [], []
-        req_tps, req_p95_itl = [], []
+        req_tps, req_p95_itl, req_cached, req_e2e, req_steady_tpot = [], [], [], [], []
         for lane, (r, (n, out)) in enumerate(zip(reqs, shape)):
             rid = r['rid']
             start, first, last, done = (r[k] for k in ('start_ns', 'first_ns', 'last_ns', 'done_ns'))
@@ -552,14 +566,15 @@ def _measure(row, p, path):
                           (r['finish_reason'] != 'stop' or (type(r['observed_finish'].get('matched')) is int and
                                                             r['observed_finish']['matched'] == 1)),
                           'stream tokens, finish or digest differ from observed output')
-                    if wave['timed']:
+                    if wave['timed'] and scene in private_ids:
                         private_ids[scene][prompt] = ids
 
                 if wave['timed']:
-                    outputs[prompt] = [r['sha256'], generated, r['finish_reason']] if p.natural_eos else r['sha256']
-                    if p.natural_eos:
-                        request_outputs[scene][prompt] = dict(sha256=r['sha256'], tokens=generated,
-                                                               finish_reason=r['finish_reason'])
+                    if scene in request_outputs:
+                        outputs[prompt] = [r['sha256'], generated, r['finish_reason']] if p.natural_eos else r['sha256']
+                        if p.natural_eos:
+                            request_outputs[scene][prompt] = dict(sha256=r['sha256'], tokens=generated,
+                                                                   finish_reason=r['finish_reason'])
                     if p.chat_corpus_sha256 and scene == 'W3' and not p.workbuddy_sla:
                         visible = r['visible_answer_ns']
                         _need(visible is None or (_uint(visible) and first <= visible <= last),
@@ -594,10 +609,20 @@ def _measure(row, p, path):
                 tpot.append(req_tpot)
                 if p.workbuddy_sla:
                     req_tps.append(1000.0 / req_tpot)
+                    sec = r.get('second_ns')
+                    if generated > 2 and type(sec) is int and first <= sec < last:
+                        req_steady_tpot.append((last - sec) / (generated - 2) / 1e6)
+                    else:
+                        req_steady_tpot.append(req_tpot)
             if p.workbuddy_sla:
                 p95_val = r.get('p95_itl_ms')
                 _need(type(p95_val) in (int, float) and p95_val >= 0, 'missing WorkBuddy p95_itl_ms')
                 req_p95_itl.append(float(p95_val))
+                req_e2e.append((done - start) / 1e6)
+                if p.workbuddy_v2:
+                    ct = r.get('cached_tokens')
+                    _need(type(ct) is int and ct >= 0, 'missing WorkBuddy cached_tokens')
+                    req_cached.append(ct)
             if p.natural_eos and wave['timed'] and scene == 'W4':
                 concurrent.append(dict(wave=i, lane=lane, tokens=generated, finish_reason=r['finish_reason'],
                                        tpot_ms=(last-first)/(generated-1)/1e6 if generated > 1 else None,
@@ -611,8 +636,28 @@ def _measure(row, p, path):
             tpot_ms = median(tpot) if tpot else None
             overall = sum(lengths) * 1e9 / (b-a)
             rule = (p.score_rule or DEV_SCORE_RULE)[scene]
-            score = {'decode_tokens_per_s':1000/tpot_ms if tpot_ms else None,
-                     'reciprocal_ttft_per_s':1000/ttft_ms,'wave_output_tokens_per_s':overall}[rule]
+            if rule == 'p25_decode_tokens_per_s':
+                src_tpot = req_steady_tpot if len(req_steady_tpot) == len(tpot) else tpot
+                _need(len(src_tpot) >= 2, 'p25 decode requires at least 2 lanes')
+                tpot_ms = sorted(src_tpot)[-2]
+                score = 1000.0 / tpot_ms
+            elif rule == 'p20_decode_tokens_per_s':
+                src_tpot = req_steady_tpot if len(req_steady_tpot) == len(tpot) else tpot
+                _need(len(src_tpot) >= 4, 'p20 decode requires at least 4 lanes')
+                tpot_ms = sorted(src_tpot)[-4]
+                score = 1000.0 / tpot_ms
+            elif rule == 'workbuddy_v2_mixed':
+                _need(len(reqs) == 8 and len(tpot) == 8, 'workbuddy v2 W4 requires 6 hot + 2 cold lanes')
+                hot_tpot = sorted(tpot[:6])[-2]
+                w4_hot_tps = 1000.0 / hot_tpot
+                w4_cold_ttft = median(ttft[6:])
+                w4_cold_e2e = max(req_e2e[6:])
+                score = exp((15.0 * log(w4_hot_tps) + 15.0 * log(1000.0 / w4_cold_ttft)) / 30.0)
+            elif rule == 'guardrail_64k':
+                score = 1000.0 / tpot_ms if tpot_ms else None
+            else:
+                score = {'decode_tokens_per_s':1000/tpot_ms if tpot_ms else None,
+                         'reciprocal_ttft_per_s':1000/ttft_ms,'wave_output_tokens_per_s':overall}[rule]
             numbers = dict(ttft_ms=ttft_ms,tpot_ms=tpot_ms,output_toks_per_s=overall,dev_score=score)
             if p.natural_eos:
                 numbers.update(output_tokens=sum(lengths), e2e_ms=median((d-s)/1e6 for s,d in zip(starts,dones)))
@@ -623,13 +668,32 @@ def _measure(row, p, path):
                     p95_itl_ms=max(req_p95_itl) if req_p95_itl else 0.0,
                     unfinished_count=0,
                 )
+            if p.workbuddy_v2:
+                numbers.update(
+                    cached_tokens_min=min(req_cached),
+                    cached_tokens_mean=sum(req_cached) / len(req_cached),
+                )
+                if rule == 'workbuddy_v2_mixed':
+                    numbers.update(
+                        w4_hot_decode_tps=w4_hot_tps,
+                        w4_cold_ttft_ms=w4_cold_ttft,
+                        w4_cold_e2e_ms=w4_cold_e2e,
+                        hot_cached_tokens_min=min(req_cached[:6]),
+                        cold_cached_tokens_max=max(req_cached[6:]),
+                    )
+                elif rule == 'guardrail_64k':
+                    numbers['decode_tokens_per_s'] = score
             metrics[scene].append(numbers)
     _need(_disjoint(windows), 'timing waves overlap')
     def measured(values):
         present = [value for value in values if value is not None]
         return median(present) if present else None
-    data = dict(scenes={scene: {k: measured(w[k] for w in waves) for k in waves[0]} for scene, waves in metrics.items()},
-                profiler_enabled=False)
+    all_scenes = {scene: {k: measured(w[k] for w in waves) for k in waves[0]} for scene, waves in metrics.items()}
+    if p.workbuddy_v2:
+        g64k = all_scenes.pop('G64K')
+        data = dict(scenes=all_scenes, guardrails={'G64K': g64k}, profiler_enabled=False)
+    else:
+        data = dict(scenes=all_scenes, profiler_enabled=False)
     _need(all(scene['dev_score'] is not None for scene in data['scenes'].values()), 'no observable decode interval')
     if p.natural_eos:
         data['timing_mode'] = 'natural_eos'
@@ -638,8 +702,8 @@ def _measure(row, p, path):
         if p.replay_protocol:
             data['replay_protocol'] = p.replay_protocol
             data['_private_replay'] = dict(tokens=private_ids, service=row['service_id'], run=row['run_id'],
-                                          rids=sorted(rids), warm=sorted({fingerprint for waves in p.measure_input_hashes.values()
-                                          for wave in waves[:p.warm_waves] for fingerprint in wave}))
+                                          rids=sorted(rids), warm=sorted({fingerprint for s, waves in p.measure_input_hashes.items()
+                                          for wave in waves[:warm_for(s)] for fingerprint in wave}))
         data['concurrent_requests'] = concurrent
         if p.chat_corpus_sha256:
             data['chat_corpus_sha256'] = p.chat_corpus_sha256

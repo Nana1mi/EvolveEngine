@@ -168,8 +168,8 @@ def _verify(run, contract, proposal_segment=None):
                 replayed.update(scoring_version=scoring['version'],
                                 weighted_score=business.weighted_score(replayed['scene_ratios'],
                                                                        scoring.get('weight_percent')))
-                if scoring['version'] == business.WORKBUDDY_VERSION:
-                    sla = business.workbuddy_sla_summary(meter['data'].get('scenes') or {})
+                if scoring['version'] in business.WORKBUDDY_VERSIONS:
+                    sla = business.workbuddy_sla_summary(meter['data'].get('scenes') or {}, meter['data'].get('guardrails'))
                     if sla:
                         replayed['workbuddy_sla'] = sla
             if policy: replayed['gain_status'] = weights.PROVISIONAL

@@ -55,22 +55,59 @@ def compare_dev(reference, candidate, *, replay_floors=None):
              all(reference.data[key] == candidate.data[key] for key in pair_keys),
              'paired timing must use the same independently frozen requests')
     a, b = (r.data.get('scenes') for r in (reference, candidate))
-    need(type(a) is dict and type(b) is dict and set(a) == set(b) == set(SCENES),
-         'comparison requires the same four workloads')
-    ratios = {}
-    for scene in SCENES:
-        need(type(a[scene]) is dict and type(b[scene]) is dict, 'invalid scene metrics')
-        x, y = a[scene].get('dev_score'), b[scene].get('dev_score')
-        need(all(type(v) in (int, float) and isfinite(v) and v > 0 for v in (x, y)), 'invalid scene score')
-        ratios[scene] = y / x
-        need(isfinite(ratios[scene]) and ratios[scene] > 0, 'invalid scene ratio')
+    wb_v2 = (type(a) is dict and set(a) == set(business.WORKBUDDY_V2_REPLAY_SCENES)
+             and type(b) is dict and set(b) == set(business.WORKBUDDY_V2_REPLAY_SCENES))
+    if wb_v2:
+        ratios = {}
+        for scene in ('W1', 'W2', 'W3', 'W5'):
+            x, y = a[scene].get('dev_score'), b[scene].get('dev_score')
+            need(all(type(v) in (int, float) and isfinite(v) and v > 0 for v in (x, y)), 'invalid scene score')
+            ratios[scene] = y / x
+        x_hot, y_hot = a['W4'].get('w4_hot_decode_tps'), b['W4'].get('w4_hot_decode_tps')
+        x_cold, y_cold = a['W4'].get('w4_cold_ttft_ms'), b['W4'].get('w4_cold_ttft_ms')
+        need(all(type(v) in (int, float) and isfinite(v) and v > 0 for v in (x_hot, y_hot, x_cold, y_cold)),
+             'invalid W4 v2 sub-metrics')
+        ratios['W4_hot'] = y_hot / x_hot
+        ratios['W4_cold'] = x_cold / y_cold
+        a_g = (reference.data.get('guardrails') or {}).get('G64K') or {}
+        b_g = (candidate.data.get('guardrails') or {}).get('G64K') or {}
+        x_e2e, y_e2e = a['W4'].get('w4_cold_e2e_ms'), b['W4'].get('w4_cold_e2e_ms')
+        x_gt, y_gt = a_g.get('ttft_ms'), b_g.get('ttft_ms')
+        x_gd, y_gd = a_g.get('decode_tokens_per_s'), b_g.get('decode_tokens_per_s')
+        x_itl = max(a[s].get('p95_itl_ms', 0.0) for s in ('W3', 'W4', 'W5'))
+        y_itl = max(b[s].get('p95_itl_ms', 0.0) for s in ('W3', 'W4', 'W5'))
+        need(all(type(v) in (int, float) and isfinite(v) and v > 0 for v in (x_e2e, y_e2e, x_gt, y_gt, x_gd, y_gd, x_itl, y_itl)),
+             'invalid workbuddy v2 guardrail metrics')
+        guardrail_ratios = dict(
+            w4_cold_e2e=x_e2e / y_e2e,
+            g64k_ttft=x_gt / y_gt,
+            g64k_decode=y_gd / x_gd,
+            p95_itl=x_itl / y_itl,
+        )
+        unfinished = sum(int(b[s].get('unfinished_count', 0)) for s in business.WORKBUDDY_V2_REPLAY_SCENES) + int(b_g.get('unfinished_count', 0))
+    else:
+        need(type(a) is dict and type(b) is dict and set(a) == set(b) == set(SCENES),
+             'comparison requires the same four workloads')
+        ratios = {}
+        for scene in SCENES:
+            need(type(a[scene]) is dict and type(b[scene]) is dict, 'invalid scene metrics')
+            x, y = a[scene].get('dev_score'), b[scene].get('dev_score')
+            need(all(type(v) in (int, float) and isfinite(v) and v > 0 for v in (x, y)), 'invalid scene score')
+            ratios[scene] = y / x
+            need(isfinite(ratios[scene]) and ratios[scene] > 0, 'invalid scene ratio')
+        guardrail_ratios = None
+        unfinished = 0
     w3 = None
-    if reference.data.get('chat_corpus_sha256') and 'w3_requests' in reference.data:
+    if not wb_v2 and reference.data.get('chat_corpus_sha256') and 'w3_requests' in reference.data:
         ratios['W3'],w3 = business.paired_w3_ttft(reference.data['w3_requests'],candidate.data['w3_requests'])
     result = dict(reference=reference.evidence, receipt=candidate.evidence, scene_ratios=ratios,
-                  equal_scene_geomean=exp(sum(log(v) for v in ratios.values()) / len(SCENES)),
+                  equal_scene_geomean=exp(sum(log(v) for v in ratios.values()) / len(ratios)),
                   interpretation='descriptive_development_comparison')
+    if guardrail_ratios is not None:
+        result['guardrail_ratios'] = guardrail_ratios
+        result['unfinished_count'] = unfinished
     if reference.data.get('timing_mode') == 'natural_eos':
+        expected_replay = set(business.WORKBUDDY_V2_REPLAY_SCENES) if wb_v2 else set(business.WEIGHTS)
         for arm in (reference, candidate):
             proof = arm.data.get('output_authentication', {})
             from .v3_level3_evidence import BOUND_REPLAY
@@ -79,7 +116,7 @@ def compare_dev(reference, candidate, *, replay_floors=None):
                  and _digest(proof.get('replay_receipt')), 'missing independent timing-output replay')
             if method == BOUND_REPLAY:
                 detail = proof.get('agreement', {})
-                need(type(detail) is dict and set(detail) == set(business.WEIGHTS), 'missing bound replay coverage')
+                need(type(detail) is dict and set(detail) == expected_replay, 'missing bound replay coverage')
                 for scene, d in detail.items():
                     need(all(type(d.get(k)) is int for k in ('requests','exact','same_positions','positions')) and
                          0 <= d['exact'] <= d['requests'] == len(arm.data['timed_request_outputs'][scene]) and
@@ -365,8 +402,8 @@ class Run:
                 scoring_version=self.scoring,
                 weighted_score=business.weighted_score(comparison['scene_ratios'], self.score_policy['weight_percent']),
             )
-            if self.scoring == business.WORKBUDDY_VERSION:
-                sla = business.workbuddy_sla_summary(trial.data.get('scenes') or {})
+            if self.scoring in business.WORKBUDDY_VERSIONS:
+                sla = business.workbuddy_sla_summary(trial.data.get('scenes') or {}, trial.data.get('guardrails'))
                 if sla:
                     comparison['workbuddy_sla'] = sla
             if self.weight_audit:

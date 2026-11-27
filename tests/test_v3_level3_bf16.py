@@ -443,6 +443,151 @@ class Bf16MigrationTests(unittest.TestCase):
             self.assertEqual(out['points'][0]['id'], '6' * 64)
             self.assertAlmostEqual(out['points'][0]['aggregate'], 1.2172683, places=5)
 
+    def test_workbuddy_v2_scoring_guardrails_and_precision_targets(self):
+        from math import exp, log
+        from evolveengine import v3_level3_scoring as scoring
+        from experiments.spark26_gguf.level3 import repeat_e0
+
+        # 1. Precision target rule: min(2.5%, max(1.5%, 1.2 * half))
+        tight = scoring.workbuddy_v2_precision_target([0.001, -0.001, 0.002, -0.002, 0.001, -0.001])
+        self.assertEqual(tight, 1.015)
+        wide = scoring.workbuddy_v2_precision_target([0.04, -0.04, 0.03, -0.03, 0.04, -0.04])
+        self.assertEqual(wide, 1.025)
+        mid = scoring.workbuddy_v2_precision_target([0.015, -0.015, 0.016, -0.016, 0.014, -0.014])
+        self.assertGreater(mid, 1.015)
+        self.assertLess(mid, 1.025)
+
+        # 2. Policy creation & roundtrip resolve_policy
+        env = {'W1': 0.01, 'W2': 0.02, 'W3': 0.03, 'W4_hot': 0.025, 'W4_cold': 0.03, 'W5': 0.03}
+        genv = {'w4_cold_e2e': 0.03, 'g64k_ttft': 0.03, 'g64k_decode': 0.02, 'p95_itl': 0.05}
+        ptargets = {'W3': 1.022, 'W4_hot': 1.020, 'W4_cold': 1.024, 'W5': 1.021}
+        rfloors = {s: 0.90 for s in scoring.WORKBUDDY_V2_REPLAY_SCENES}
+        pol = scoring.natural_policy(
+            '1' * 64, '2' * 64, env, chat_corpus='3' * 64, replay_floors=rfloors,
+            version=scoring.WORKBUDDY_V2_VERSION, scene_precision_targets=ptargets, guardrail_envelope=genv,
+        )
+        self.assertEqual(scoring.resolve_policy(pol), pol)
+        self.assertEqual(pol['weight_percent'], {'W1': 10, 'W2': 15, 'W3': 25, 'W4_hot': 15, 'W4_cold': 15, 'W5': 20})
+        self.assertEqual(pol['guardrail_floors']['p95_itl'], 0.80)
+
+        # 3. summarize_build: passes when healthy, rejects on w4_cold_e2e / g64k / p95_itl / unfinished regression
+        def make_jobs(g_override=None, unfinished=0, w3_vals=None):
+            jobs = []
+            w3_seq = w3_vals or [1.10, 1.11, 1.09, 1.10, 1.11, 1.09]
+            for i in range(6):
+                ref_id = f'{i:064x}'
+                cand_id = f'{i+100:064x}'
+                g = {'w4_cold_e2e': 1.02, 'g64k_ttft': 1.01, 'g64k_decode': 1.01, 'p95_itl': 0.95}
+                if g_override:
+                    g.update(g_override)
+                ref_row = {'evidence': ref_id, 'engine': 'e0', 'build': 'b0'}
+                cand_row = {
+                    'evidence': cand_id, 'engine': 'c1', 'build': 'bc1',
+                    'data': {'measurement_pair': i + 1, 'measurement_inputs_sha256': f'{i+200:064x}'},
+                    'performance': {
+                        'reference': ref_id,
+                        'scene_ratios': {'W1': 1.02, 'W2': 1.05, 'W3': w3_seq[i], 'W4_hot': 1.15, 'W4_cold': 1.08, 'W5': 1.25},
+                        'guardrail_ratios': g,
+                        'unfinished_count': unfinished,
+                    },
+                }
+                if i % 2 == 0:
+                    jobs.extend([ref_row, cand_row])
+                else:
+                    jobs.extend([cand_row, ref_row])
+            return jobs
+
+        ok = scoring.summarize_build(make_jobs(), 'c1', 'bc1', pol)
+        self.assertEqual(ok['status'], 'eligible')
+        self.assertTrue(ok['eligible_for_delivery'])
+
+        reg_e2e = scoring.summarize_build(make_jobs(g_override={'w4_cold_e2e': 0.85}), 'c1', 'bc1', pol)
+        self.assertEqual(reg_e2e['status'], 'regression')
+        self.assertIn('w4_cold_e2e', reg_e2e['below_floor'])
+        self.assertFalse(reg_e2e['eligible_for_delivery'])
+
+        reg_64k = scoring.summarize_build(make_jobs(g_override={'g64k_ttft': 0.80}), 'c1', 'bc1', pol)
+        self.assertEqual(reg_64k['status'], 'regression')
+        self.assertIn('g64k_ttft', reg_64k['below_floor'])
+
+        reg_itl = scoring.summarize_build(make_jobs(g_override={'p95_itl': 0.70}), 'c1', 'bc1', pol)
+        self.assertEqual(reg_itl['status'], 'regression')
+        self.assertIn('p95_itl', reg_itl['below_floor'])
+
+        reg_unf = scoring.summarize_build(make_jobs(unfinished=1), 'c1', 'bc1', pol)
+        self.assertEqual(reg_unf['status'], 'regression')
+        self.assertIn('unfinished_count', reg_unf['below_floor'])
+
+        # 4. repeat_e0.summarize on 6 v2 pairs
+        v2_pairs = []
+        for idx, (a, b) in enumerate(repeat_e0.ORDER):
+            arm_a = {
+                'arm': a,
+                'scenes': {
+                    'W1': {'dev_score': 54.0}, 'W2': {'dev_score': 0.65},
+                    'W3': {'dev_score': 33.0, 'p95_itl_ms': 24.0},
+                    'W4': {'dev_score': 10.0, 'w4_hot_decode_tps': 32.0, 'w4_cold_ttft_ms': 3000.0, 'w4_cold_e2e_ms': 8000.0, 'p95_itl_ms': 25.0},
+                    'W5': {'dev_score': 28.0, 'p95_itl_ms': 34.0},
+                },
+                'guardrails': {'G64K': {'ttft_ms': 9900.0, 'decode_tokens_per_s': 37.0}},
+            }
+            arm_b = {
+                'arm': b,
+                'scenes': {
+                    'W1': {'dev_score': 54.2}, 'W2': {'dev_score': 0.655},
+                    'W3': {'dev_score': 33.3 if idx % 2 == 0 else 32.7, 'p95_itl_ms': 24.2},
+                    'W4': {'dev_score': 10.1, 'w4_hot_decode_tps': 32.2, 'w4_cold_ttft_ms': 3020.0, 'w4_cold_e2e_ms': 8040.0, 'p95_itl_ms': 25.1},
+                    'W5': {'dev_score': 28.2, 'p95_itl_ms': 34.3},
+                },
+                'guardrails': {'G64K': {'ttft_ms': 9950.0, 'decode_tokens_per_s': 37.1}},
+            }
+            v2_pairs.append([arm_a, arm_b])
+        summary = repeat_e0.summarize(v2_pairs)
+        self.assertTrue(summary['stable'])
+        self.assertEqual(set(summary['descriptive_log_envelope']['scenes']), set(scoring.WORKBUDDY_V2_WEIGHTS))
+        self.assertEqual(set(summary['guardrail_log_envelope']), set(scoring.GUARDRAIL_KEYS))
+        self.assertEqual(set(summary['scene_precision_targets']), set(scoring.WORKBUDDY_V2_PRIMARY_SCENES))
+
+    def test_long_context_logprob_calibration_and_grading(self):
+        from math import log
+        from evolveengine import v3_level3_long_ctx as lc
+        from evolveengine.v3_harness import canonical, digest
+
+        def make_dist(top1_id, p1, other_id, p2):
+            return {
+                'prompt_tokens': 16384, 'prompt_sha256': 'a' * 64,
+                'top1_id': top1_id, 'top1_logprob': log(p1),
+                'top_logprobs': {str(top1_id): log(p1), str(other_id): log(p2)},
+            }
+
+        e0a = {
+            'ctx16k': make_dist(10, 0.90, 11, 0.095),
+            'ctx64k': dict(make_dist(20, 0.85, 21, 0.145), prompt_tokens=64000, prompt_sha256='b' * 64),
+        }
+        e0b = {
+            'ctx16k': make_dist(10, 0.899, 11, 0.096),
+            'ctx64k': dict(make_dist(20, 0.849, 21, 0.146), prompt_tokens=64000, prompt_sha256='b' * 64),
+        }
+        cal = lc.calibrate_bounds(e0a, e0b)
+        self.assertLess(cal['e0e0_max_tv_upper'], 0.01)
+        self.assertGreaterEqual(cal['max_tv_upper'], 0.02)
+        with tempfile.TemporaryDirectory() as td:
+            anchor_path = Path(td) / 'anchor_long_ctx.json'
+            doc = {'schema': lc.SCHEMA, 'engine': 'c' * 64, 'calibration': cal, 'cases': e0a}
+            raw = canonical(doc) + b'\n'
+            anchor_path.write_bytes(raw)
+            sha = digest(raw)
+            good_rows = [dict(case=k, **v) for k, v in e0b.items()]
+            self.assertEqual(lc.grade_long_ctx(good_rows, anchor_path, sha)['status'], 'valid')
+            bad_rows = [
+                dict(case='ctx16k', **e0b['ctx16k']),
+                dict(case='ctx64k', **dict(make_dist(99, 0.95, 98, 0.04), prompt_tokens=64000, prompt_sha256='b' * 64)),
+            ]
+            res = lc.grade_long_ctx(bad_rows, anchor_path, sha)
+            self.assertEqual(res['status'], 'violation')
+            self.assertTrue(res['cases']['ctx16k']['passed'])
+            self.assertFalse(res['cases']['ctx64k']['passed'])
+
 
 if __name__ == '__main__':
     unittest.main()

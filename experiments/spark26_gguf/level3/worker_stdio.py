@@ -136,13 +136,17 @@ def graph_replay_peak(replay, *, telemetry_only=False):
     quality, measure = operations['develop_quality'], operations['develop_measure']
     q, m = quality['data'], measure['data']
     peak = q['observed_peak_sample_bytes']
+    from evolveengine.v3_level3_collect import LONG_CTX_CASE
+    from evolveengine.v3_level3_scoring import WORKBUDDY_V2_REPLAY_SCENES
+    expected_q = dict.fromkeys((*QUALITY_CASES, LONG_CTX_CASE), 'pass') if LONG_CTX_CASE in q.get('case_outcomes', {}) else dict.fromkeys(QUALITY_CASES, 'pass')
+    expected_s = set(WORKBUDDY_V2_REPLAY_SCENES) if set(m.get('scenes', {})) == set(WORKBUDDY_V2_REPLAY_SCENES) else set(SCENES)
     need(quality['status'] == 'valid' and measure['status'] == 'observed'
          and q['engine'] == m['engine'] == replay['engine']
-         and q['case_outcomes'] == dict.fromkeys(QUALITY_CASES, 'pass')
+         and q['case_outcomes'] == expected_q
          and type(peak) is int and peak > 0 and (telemetry_only or peak < E0_MEMORY_GUARD_BYTES - control_run.MARGIN_BYTES)
          and m['measurement_pair'] == 0 and m['profiler_enabled'] is False
          and all(control_run._sha(m[key]) for key in ('measurement_inputs_sha256','timed_outputs_sha256'))
-         and set(m['scenes']) == set(SCENES)
+         and set(m['scenes']) == expected_s
          and all(type(row['dev_score']) in (int, float) and isfinite(row['dev_score']) and row['dev_score'] > 0
                  for row in m['scenes'].values()), 'Graph E0 quality or real-text timing is incomplete')
     return peak
@@ -417,9 +421,12 @@ def make_worker(root, settings, registration, lease, lease_pin, *, scope, contro
             lane.activate(ref,registration,e0.digest)
             d3_pin = settings.get('anchor_d3_sha256')
             r1_pin = settings.get('anchor_r1_sha256')
+            lc_anchor = Path(settings['anchor_long_ctx']) if 'anchor_long_ctx' in settings else None
+            lc_sha = settings.get('anchor_long_ctx_sha256')
             quality.enable_trajectory(ref['sha256'],lane.code,
                 lambda rows:grade(rows,Path(settings['anchor_d3']),Path(settings['anchor_r1']),paired=True,
-                                  d3_manifest=d3_pin,r1_manifest=r1_pin))
+                                  d3_manifest=d3_pin,r1_manifest=r1_pin,
+                                  long_ctx_anchor=lc_anchor,long_ctx_sha256=lc_sha))
         else:
             from experiments.spark26_gguf.level3.live_split_quality import enable, restore_teacher
             lane=enable(quality,settings,ref,controls['split_quality'],registration,e0,registered)

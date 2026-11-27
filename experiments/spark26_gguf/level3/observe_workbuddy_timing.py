@@ -49,7 +49,7 @@ def speculation(meta):
     return dict(accepted=accepted, proposed=proposed, verifies=verifies)
 
 
-def request(ids, out, gate, *, client=None, clock=perf_counter_ns, natural_eos=False, answer_codec=None, retain_ids=False, quality_only=False, record_itl=False):
+def request(ids, out, gate, *, client=None, clock=perf_counter_ns, natural_eos=False, answer_codec=None, retain_ids=False, quality_only=False, record_itl=False, delay_s=0.0):
     rid = uuid4().hex
     n = len(ids)
     body = dict(rid=rid, input_ids=ids, stream=True,
@@ -57,16 +57,20 @@ def request(ids, out, gate, *, client=None, clock=perf_counter_ns, natural_eos=F
     message = Request('http://127.0.0.1:30091/generate', json.dumps(body).encode(), {'Content-Type': 'application/json'})
     client = build_opener(ProxyHandler({})) if client is None else client
     gate.wait(timeout=10)
+    if delay_s > 0:
+        from time import sleep
+        sleep(delay_s)
     start = clock()
-    first = last = finish = done = None
+    first = second = last = finish = done = None
     answer = reasoning_end = None
     count = 0
     output_pin = spec_metrics = reason = None
+    cached_tokens = None
     reconstructed = []
     pending = []  # unconfirmed cumulative prefix on non-timed, quality-only E0 streams
     itls_ns = []
     first_is_single = False
-    with client.open(message, timeout=180 if n >= 16384 else 100) as reply:
+    with client.open(message, timeout=240 if n >= 32768 else (180 if n >= 16384 else 100)) as reply:
         if reply.status != 200 or reply.headers.get_content_type() != 'text/event-stream':
             raise ValueError('invalid timing SSE status or content type')
         while line := reply.readline(1 << 20):
@@ -86,6 +90,8 @@ def request(ids, out, gate, *, client=None, clock=perf_counter_ns, natural_eos=F
             row = json.loads(data)
             meta = row['meta_info']
             produced = meta['completion_tokens']
+            if cached_tokens is None and type(meta.get('cached_tokens')) is int:
+                cached_tokens = meta['cached_tokens']
             if (finish is not None or meta['id'] != rid or meta['prompt_tokens'] != n
                     or type(produced) is not int or not count <= produced <= out):
                 raise ValueError('invalid timing stream identity or token count')
@@ -118,6 +124,8 @@ def request(ids, out, gate, *, client=None, clock=perf_counter_ns, natural_eos=F
                         raise ValueError('first token timing ambiguous')
                     first = timestamp
                 elif record_itl and last is not None:
+                    if second is None and produced >= 2:
+                        second = timestamp
                     delta_tok = produced - count
                     per_tok = (timestamp - last) / delta_tok
                     itls_ns.extend([per_tok] * delta_tok)
@@ -154,6 +162,9 @@ def request(ids, out, gate, *, client=None, clock=perf_counter_ns, natural_eos=F
     if answer_codec is not None:
         result['visible_answer_ns'] = answer
     if record_itl:
+        result['cached_tokens'] = 0 if cached_tokens is None else cached_tokens
+        if second is not None:
+            result['second_ns'] = second
         if itls_ns:
             ordered = sorted(itls_ns)
             idx = min(len(ordered) - 1, int(0.95 * (len(ordered) - 1)))
@@ -176,7 +187,9 @@ def main():
         codec = Tokenizer.from_file('/model/tokenizer.json')
         if codec.encode('</think>',add_special_tokens=False).ids != [4]:
             raise ValueError('unexpected Spark reasoning boundary')
+    scene_warm = plan.get('scene_warm_waves') or {}
     for scene, shape in plan['scenes'].items():
+        warm_n = scene_warm.get(scene, plan['warm_waves'])
         for turn, wave in enumerate(inputs[scene]):
             bounds = plan.get('w3_input_range') if scene == 'W3' else None
             ranges=plan['lane_ranges'][scene] if 'lane_ranges' in plan else [bounds or (n,n) for n,_ in shape]
@@ -185,12 +198,14 @@ def main():
             with ThreadPoolExecutor(max_workers=len(shape)) as pool:
                 gate = Barrier(len(shape))
                 wb = bool(plan.get('workbuddy_sla'))
+                wb_v2 = bool(plan.get('workbuddy_v2'))
                 jobs = [pool.submit(request, ids, out, gate, natural_eos=plan.get('timing_mode') == 'natural_eos',
                                     answer_codec=codec if (scene=='W3' and not wb) else None,
-                                    retain_ids=bool(plan.get('replay_protocol')), record_itl=wb)
-                        for ids, (_, out) in zip(wave, shape)]
+                                    retain_ids=bool(plan.get('replay_protocol')), record_itl=wb,
+                                    delay_s=(0.7 if (wb_v2 and scene == 'W4' and lane >= 6) else 0.0))
+                        for lane, (ids, (_, out)) in enumerate(zip(wave, shape))]
                 results = [job.result() for job in jobs]
-            print(json.dumps(dict(scene=scene, index=turn, timed=turn >= plan['warm_waves'], requests=results)), flush=True)
+            print(json.dumps(dict(scene=scene, index=turn, timed=turn >= warm_n, requests=results)), flush=True)
 
 
 if __name__ == '__main__':

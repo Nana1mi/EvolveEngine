@@ -52,7 +52,15 @@ def system_for(config):
     if config.get('policy') != 'objective_v1':
         return SYSTEM
     _w = (config.get('registered_scoring') or {}).get('weight_percent') or business.weights_for(config.get('scoring'))
-    if config.get('scoring') == business.WORKBUDDY_VERSION:
+    if config.get('scoring') == business.WORKBUDDY_V2_VERSION:
+        _scene_summary = (
+            f"Optimize WorkBuddy agent serving (v2). The weighted geometric mean gives W1 single-request decode {_w['W1']}%, "
+            f"W2 long-context cold TTFT {_w['W2']}%, W3 8-session hot-prefix P25 decode {_w['W3']}%, "
+            f"W4_hot mixed hot-lane P25 decode {_w['W4_hot']}%, W4_cold mixed cold TTFT {_w['W4_cold']}%, "
+            f"and W5 20-session burst hot-prefix P20 decode {_w['W5']}%. "
+            "Non-regression guardrails enforce W4 cold completion time, unfinished_count=0, 64K single-request TTFT & decode, and P95 ITL. "
+        )
+    elif config.get('scoring') == business.WORKBUDDY_VERSION:
         _scene_summary = (
             f"Optimize WorkBuddy agent serving. The weighted geometric mean gives W1 single-request decode {_w['W1']}%, "
             f"W2 long-context cold TTFT {_w['W2']}%, W3 multi-session hot-prefix decode {_w['W3']}%, "
@@ -94,7 +102,24 @@ def system_for(config):
         w = registered.get('weight_percent') or business.weights_for(config['scoring'])
         floors = ', '.join(f'{key}={value:.9f}×' for key, value in registered['scene_floors'].items())
         noise = ', '.join(f'{key}={value:.9f} log-ratio' for key, value in registered['scene_log_envelope'].items())
-        if config['scoring'] == business.WORKBUDDY_VERSION:
+        if config['scoring'] == business.WORKBUDDY_V2_VERSION:
+            gfloors = ', '.join(f'{key}={value:.9f}×' for key, value in registered['guardrail_floors'].items())
+            ptargets = ', '.join(f'{key}≤{(value-1)*100:.2f}%' for key, value in registered['scene_precision_targets'].items())
+            prompt += (f"\n\nWorkBuddy v2 natural EOS primary score = exp({w['W1']/100:.2f} ln(W1) + {w['W2']/100:.2f} ln(W2) + "
+                       f"{w['W3']/100:.2f} ln(W3) + {w['W4_hot']/100:.2f} ln(W4_hot) + {w['W4_cold']/100:.2f} ln(W4_cold) + "
+                       f"{w['W5']/100:.2f} ln(W5)). "
+                       'W1 is single-request decode speed, W2 is 16K cold TTFT inverse, W3 is 8-session 12K hot-prefix 2nd-slowest decode speed (4 waves), '
+                       'W4_hot is 6-hot+2-cold mixed hot-lane 2nd-slowest decode speed, W4_cold is mixed cold TTFT inverse, '
+                       'and W5 is 20-session 12K hot-prefix 4th-slowest decode speed. '
+                       'Business SLA attainment (share >= 40 tok/s, share >= 50 tok/s, TTFT, P95 ITL, cached_tokens, unfinished count) is reported separately. '
+                       f'Calibrated per-scene floors are {floors}. Guardrail floors (non-scored, mandatory) are {gfloors} plus unfinished_count=0. '
+                       f'Calibrated primary-scene precision half-width targets are {ptargets}. '
+                       'The quality lane includes 16K/64K long-context logprob verification against the E0 anchor. '
+                       'Use at least six distinct matched pairs in alternating order. A confidence interval crossing a floor needs more evidence. '
+                       'Use develop_stress for unscored fixed-output tests. '
+                       'You choose the optimization direction. Speculative decoding, scheduling, fusion and CUDA Graph changes are allowed. '
+                       'Keep the pinned Target weights and its output semantics, including sampling semantics.')
+        elif config['scoring'] == business.WORKBUDDY_VERSION:
             prompt += (f"\n\nWorkBuddy natural EOS primary score = exp({w['W1']/100:.2f} ln(W1) + {w['W2']/100:.2f} ln(W2) + "
                        f"{w['W3']/100:.2f} ln(W3) + {w['W4']/100:.2f} ln(W4)). "
                        'W1 is E0 single-request decode TPOT divided by candidate TPOT, W2 is E0 long-context cold TTFT divided by candidate TTFT, '
@@ -376,7 +401,13 @@ def audit(approval, *, config_path=None):
         base_path=(Path(sr['path']).parent.parent/'registration.json' if bf16_mode
                    else Path(ref['path']).parent.parent/'registration.json')
         base=json.loads(pinned(dict(path=str(base_path),sha256=lease['baseline_sha256'])))
-        if decoded.get('scoring') == business.WORKBUDDY_VERSION:
+        if decoded.get('scoring') == business.WORKBUDDY_V2_VERSION:
+            from evolveengine.v3_level3_deploy import BF16_WORKBUDDY_64K_V2
+            need(base.get('model_format') == 'bf16_safetensors'
+                 and base.get('launch_profile') == BF16_WORKBUDDY_64K_V2
+                 and 'anchor_long_ctx' in base,
+                 'WorkBuddy v2 scoring requires a BF16 64K WorkBuddy v2 baseline registration with 16K/64K long-context anchor')
+        elif decoded.get('scoring') == business.WORKBUDDY_VERSION:
             from evolveengine.v3_level3_deploy import BF16_WORKBUDDY_64K
             need(base.get('model_format') == 'bf16_safetensors'
                  and base.get('launch_profile') == BF16_WORKBUDDY_64K,
@@ -391,7 +422,8 @@ def audit(approval, *, config_path=None):
         accepted=json.loads(pinned(result,cap=128<<10))
         if bf16_mode:
             split_controls.verify_bf16(control_root,accepted,baseline=lease['baseline_sha256'],cal=tc,
-                                       split_pin=sr['sha256'],registered=registered)
+                                       split_pin=sr['sha256'],registered=registered,
+                                       has_long_ctx='anchor_long_ctx' in base)
         else:
             split_controls.verify(control_root,accepted,baseline=lease['baseline_sha256'],cal=tc,
                                   previous_acceptance=ref['sha256'],split_pin=sr['sha256'],registered=registered)
@@ -439,6 +471,8 @@ def audit(approval, *, config_path=None):
             need(chat_mode == (chat is not None) and (not chat_mode or
                  (noise.get('trajectory_calibration_sha256')==lease['controls']['trajectory_calibration']['sha256'] and noise.get('eos_contract') == EOS_CONTRACT and noise.get('enable_thinking') is True and noise.get('chat_corpus_sha256') == chat['sha256'])),
                  'thinking chat requires its own same-workload E0/E0 calibration')
+            expected_work_keys = (set(business.WORKBUDDY_V2_REPLAY_SCENES)
+                                  if decoded['scoring'] == business.WORKBUDDY_V2_VERSION else set(business.WEIGHTS))
             need(noise['timing_mode'] == 'natural_eos' and measured['stable'] is True and
                  noise['registration_sha256'] == lease['baseline_sha256'] and
                  noise['timing_workload_sha256'] == lease['controls']['natural_workload_sha256'] and
@@ -449,15 +483,19 @@ def audit(approval, *, config_path=None):
                       (a.get('replay_protocol') == b.get('replay_protocol') == BOUND_REPLAY and
                        a.get('paired_output_work') == b.get('paired_output_work') ==
                        business.calibration_output_work(a, b, chat['sha256']) and
-                       set(a.get('paired_output_work', {})) == set(business.WEIGHTS) and
+                       set(a.get('paired_output_work', {})) == expected_work_keys and
                        all(r.get('comparable') is True for r in a['paired_output_work'].values())))
                      for index,(a,b) in enumerate(noise['receipts'], 1)),
                  'natural EOS needs six registered same-worker E0/E0 pairs')
-            decoded['registered_scoring'] = business.natural_policy(digest(raw), noise['timing_workload_sha256'],
-                                                                   measured['descriptive_log_envelope']['scenes'],
-                                                                   chat_corpus=chat['sha256'] if chat_mode else None,
-                                                                   replay_floors=business.replay_audit_floors(noise['receipts']) if chat_mode else None,
-                                                                   version=decoded['scoring'])
+            decoded['registered_scoring'] = business.natural_policy(
+                digest(raw), noise['timing_workload_sha256'],
+                measured['descriptive_log_envelope']['scenes'],
+                chat_corpus=chat['sha256'] if chat_mode else None,
+                replay_floors=business.replay_audit_floors(noise['receipts']) if chat_mode else None,
+                version=decoded['scoring'],
+                scene_precision_targets=measured.get('scene_precision_targets'),
+                guardrail_envelope=measured.get('guardrail_log_envelope'),
+            )
         else:
             noise = (HERE/'evidence'/'independent-repeatability-result-20261125.json').read_bytes()
             need(digest(noise) == business.CALIBRATION and

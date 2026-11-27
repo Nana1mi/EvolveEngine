@@ -40,11 +40,13 @@ def _base_without_mixed(rows,d3,r1,*,d3_manifest=None,r1_manifest=None):
                 eos_passed=matches,mixed_passed=None)
 
 
-def grade(rows, d3, r1, *, paired=False, d3_manifest=None, r1_manifest=None):
+def grade(rows, d3, r1, *, paired=False, d3_manifest=None, r1_manifest=None,
+          long_ctx_anchor=None, long_ctx_sha256=None):
     # Legacy parser still authenticates the two anchors, the four prompt/rid pairs,
     # the standalone abort, both additional numeric probes and the mixed chronology.
     from audit_worker import quality
-    original = [r for r in rows if r['kind'] != 'natural_stream']
+    long_ctx_rows = [r for r in rows if r.get('kind') == 'long_context_logprob']
+    original = [r for r in rows if r['kind'] not in ('natural_stream', 'long_context_logprob')]
     if paired:
         legacy = _base_without_mixed(original, d3, r1, d3_manifest=d3_manifest, r1_manifest=r1_manifest)
     elif d3_manifest is None and r1_manifest is None:
@@ -75,6 +77,16 @@ def grade(rows, d3, r1, *, paired=False, d3_manifest=None, r1_manifest=None):
         observations[case] = (semantic_stop(orig['ids'],orig['finish']) and w['finish_reason'] == 'stop' and
                               semantic_stop(ids, w['observed_finish']))
     passed = sum(observations.values())
-    return dict(legacy, status='pending_trajectory' if paired else 'valid' if passed == 4 and legacy['screen']['status'] == 'within_dev_screen'
-                and legacy['mixed_passed'] is True else 'violation', eos_passed=passed,
-                eos_contract=PROTOCOL, eos_outcomes=observations, legacy_exact_matches_diagnostic=legacy['eos_passed'])
+    long_ctx = None
+    if long_ctx_anchor is not None:
+        from .v3_level3_long_ctx import grade_long_ctx
+        long_ctx = grade_long_ctx(long_ctx_rows, long_ctx_anchor, long_ctx_sha256)
+    elif long_ctx_rows:
+        raise ValueError('unexpected long-context logprob rows without pinned anchor')
+    long_ctx_ok = long_ctx is None or long_ctx['status'] == 'valid'
+    result = dict(legacy, status='pending_trajectory' if paired else 'valid' if passed == 4 and legacy['screen']['status'] == 'within_dev_screen'
+                  and legacy['mixed_passed'] is True and long_ctx_ok else 'violation', eos_passed=passed,
+                  eos_contract=PROTOCOL, eos_outcomes=observations, legacy_exact_matches_diagnostic=legacy['eos_passed'])
+    if long_ctx is not None:
+        result['long_context'] = long_ctx
+    return result

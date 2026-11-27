@@ -101,6 +101,12 @@ class TimingCollector:
                     observer_sha256=observer_hashes,score_rule=policy.score_rule or DEV_SCORE_RULE)
         if policy.workbuddy_sla:
             plan['workbuddy_sla'] = True
+        if policy.workbuddy_v2:
+            plan['workbuddy_v2'] = True
+        if policy.scene_warm_waves:
+            plan['scene_warm_waves'] = dict(policy.scene_warm_waves)
+        if policy.scene_timed_waves:
+            plan['scene_timed_waves'] = dict(policy.scene_timed_waves)
         if input_plan is not None:
             plan['input_plan'] = input_plan
             self.schedule = TimingSchedule(documents, policy.scenes, policy.warm_waves + policy.timed_waves,
@@ -125,9 +131,13 @@ class TimingCollector:
             hashes = self.policy.weights
             waves = load_chat(chat, hashes['tokenizer.json'], hashes['chat_template.jinja'],
                               self.policy.scenes, self.policy.warm_waves, self.policy.timed_waves,
-                              split=split, engine=self.policy.engine, workbuddy=self.policy.workbuddy_sla)
+                              split=split, engine=self.policy.engine, workbuddy=self.policy.workbuddy_sla,
+                              scene_warm_waves=self.policy.scene_warm_waves,
+                              scene_timed_waves=self.policy.scene_timed_waves)
             self.chat_schedule = ChatSchedule(waves, self.policy.warm_waves,
-                                              self.policy.timed_waves, self.schedule.seed)
+                                              self.policy.timed_waves, self.schedule.seed,
+                                              scene_warm_waves=self.policy.scene_warm_waves,
+                                              scene_timed_waves=self.policy.scene_timed_waves)
             self.chat_schedule.maximum = self.schedule.maximum
             plan['input_plan'] = dict(distribution=CHAT_SCHEMA, corpus_sha256=chat['sha256'],
                                       enable_thinking=True, split=split)
@@ -193,8 +203,9 @@ class TimingCollector:
         raw = self.observer(service,observer_input,operation,deadline,script=script,**observer_options)
         policy,binding = identity(self.host,service,self.service_spec,operation,op,policy,deadline,self.variant)
         raw_rows = raw.splitlines()
-        expected = sum(policy.warm_waves + (policy.w3_timed_waves if s=='W3' and policy.w3_timed_waves
-                                           else policy.timed_waves) for s in policy.scenes)
+        expected = sum((policy.scene_warm_waves or {}).get(s, policy.warm_waves) +
+                       ((policy.scene_timed_waves or {}).get(s, policy.w3_timed_waves if s=='W3' and policy.w3_timed_waves
+                                                             else policy.timed_waves)) for s in policy.scenes)
         need(len(raw_rows)==expected,'incomplete timing client coverage')
         write_rows(operation/'timing.jsonl',binding,map(json.loads,raw_rows))
         required = ('external-identity.json','host-mappings.json','service.inspect.json','timing.jsonl',
@@ -327,20 +338,24 @@ class DockerObserver:
 
 
 QUALITY_CASES = ('numeric_32','natural_eos_4','cancel_mixed_3')
+LONG_CTX_CASE = 'long_context_logprob_16k_64k'
 MEMORY_STAGES = ('ready','post_requests')
 
 
 class QualityCollector:
     """Reuse the registered dev Judge, never its historical pass outcomes."""
-    def __init__(self, host, service_spec, policy, observer_files, observer_hashes, *, score, rule, variant='sm100'):
+    def __init__(self, host, service_spec, policy, observer_files, observer_hashes, *, score, rule, variant='sm100',
+                 long_ctx_cases_bytes=None):
         self.host,self.service_spec,self.policy,self.score,self.variant = host,service_spec,policy,score,variant
+        self.long_ctx_cases_bytes = long_ctx_cases_bytes
         required = {'observe_quality.py','numeric.py','legacy_eos.py'}
         if 'eos_contract' in rule:
             from .v3_level3_eos import PROTOCOL
             need(rule['eos_contract'] == PROTOCOL, 'unknown EOS contract')
             required.add('observe_text_timing.py')
         self.files = pinned_files(observer_files,observer_hashes,required)
-        need(policy.quality_cases==QUALITY_CASES and policy.memory_stages==MEMORY_STAGES,
+        expected_cases = (*QUALITY_CASES, LONG_CTX_CASE) if long_ctx_cases_bytes is not None else QUALITY_CASES
+        need(policy.quality_cases==expected_cases and policy.memory_stages==MEMORY_STAGES,
              'unexpected development coverage')
         need(rule.get('observer_sha256')==observer_hashes and digest(canonical(rule)+b'\n')==policy.quality_rule_sha256,
              'quality rule or client is not frozen')
@@ -359,6 +374,8 @@ class QualityCollector:
             need(re.fullmatch('[0-9a-f]{64}',split_pin),'invalid split quality registration')
             cases=(*QUALITY_CASES[:2],*SPLIT_CASES)
             trajectory.update(protocol=SPLIT_PROTOCOL,split_registration=split_pin)
+        if self.long_ctx_cases_bytes is not None:
+            cases = (*cases, LONG_CTX_CASE)
         self.rule=dict(self.rule,cases=cases,trajectory=trajectory)
         self.policy=replace(self.policy,quality_cases=cases,quality_rule_sha256=digest(canonical(self.rule)+b'\n'))
         self.score=grade
@@ -372,6 +389,8 @@ class QualityCollector:
         files = dict(self.files)
         if 'trajectory' in self.rule:
             files['paired-trajectory.json']=canonical(self.rule['trajectory'])
+        if self.long_ctx_cases_bytes is not None:
+            files['long-context-cases.json'] = self.long_ctx_cases_bytes
         if self.sampling_enabled:
             from .v3_level3_sampling import CASES, SAMPLES
             files['sampling-policy.json'] = canonical(dict(cases=CASES,samples=SAMPLES))
@@ -436,6 +455,9 @@ class QualityCollector:
                      trajectory['service']==binding['service_id'] and score['status']=='pending_trajectory','unbound trajectory')
                 write(operation/'trajectory-verdict.json',trajectory)
                 tests.update({k:(v,'trajectory-verdict.json') for k,v in trajectory_cases(trajectory,registered['protocol']).items()})
+            if self.long_ctx_cases_bytes is not None:
+                lc = score.get('long_context') or {}
+                tests[LONG_CTX_CASE] = (outcome(lc.get('status') == 'valid'), 'observer.stdout')
             outcomes={v for v,_ in tests.values()}
             write(operation/'judge.json',dict(score,status='violation' if 'fail' in outcomes else
                        'insufficient_evidence' if 'insufficient_evidence' in outcomes else 'valid'))

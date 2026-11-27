@@ -383,19 +383,22 @@ LAUNCH_BF16_WORKBUDDY_64K = ('-m','sglang.launch_server','--model-path','/model'
 
 IMMEDIATE_GRAPH_WIRE = 'graph_defaults_incremental'
 BF16_WORKBUDDY_64K = 'bf16_workbuddy_64k'
+BF16_WORKBUDDY_64K_V2 = 'bf16_workbuddy_64k_v2'
+WORKBUDDY_PROFILES = frozenset({BF16_WORKBUDDY_64K, BF16_WORKBUDDY_64K_V2})
 GRAPH_PROFILES = {
     'diagnostic_eager': frozenset(),
     'decode_graph': frozenset({'--disable-decode-cuda-graph'}),
     'graph_defaults': frozenset({'--disable-decode-cuda-graph', '--disable-prefill-cuda-graph'}),
     IMMEDIATE_GRAPH_WIRE: frozenset({'--disable-decode-cuda-graph', '--disable-prefill-cuda-graph'}),
     BF16_WORKBUDDY_64K: frozenset({'--disable-decode-cuda-graph', '--disable-prefill-cuda-graph'}),
+    BF16_WORKBUDDY_64K_V2: frozenset({'--disable-decode-cuda-graph', '--disable-prefill-cuda-graph'}),
 }
 
 
 def launch_args(spec, deployment=None):
     from .v3_level3_startup import apply
     _need(spec.launch_profile in GRAPH_PROFILES, 'unregistered launch profile')
-    if spec.launch_profile == BF16_WORKBUDDY_64K:
+    if spec.launch_profile in WORKBUDDY_PROFILES:
         _need(getattr(spec, 'model_format', 'gguf') == 'bf16_safetensors',
               'bf16_workbuddy_64k launch profile requires bf16_safetensors model format')
         return apply(LAUNCH_BF16_WORKBUDDY_64K, getattr(deployment, 'runtime_config', b''))

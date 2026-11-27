@@ -18,10 +18,10 @@ sys.path.insert(0,str(ROOT))
 from evolveengine.v3_harness import canonical, digest
 from evolveengine.v3_level3_build import BuildLimits, NativeBuildBackend, compare_cold_builds, IMAGE
 from evolveengine import v3_level3_eos as eos
-from evolveengine.v3_level3_collect import MEMORY_STAGES, QUALITY_CASES, QualityCollector, TimingCollector, source_bytes, write
-from evolveengine.v3_level3_deploy import BF16_WORKBUDDY_64K, GRAPH_PROFILES, DockerService, ServiceSpec
+from evolveengine.v3_level3_collect import LONG_CTX_CASE, MEMORY_STAGES, QUALITY_CASES, QualityCollector, TimingCollector, source_bytes, write
+from evolveengine.v3_level3_deploy import BF16_WORKBUDDY_64K, BF16_WORKBUDDY_64K_V2, WORKBUDDY_PROFILES, GRAPH_PROFILES, DockerService, ServiceSpec
 from evolveengine.v3_level3_evidence import (
-    DEV_SCORE_RULE, WORKBUDDY_SCORE_RULE, EvidencePolicy, parse_nvidia_smi_device_memory,
+    DEV_SCORE_RULE, WORKBUDDY_SCORE_RULE, WORKBUDDY_V2_SCORE_RULE, EvidencePolicy, parse_nvidia_smi_device_memory,
 )
 from evolveengine.v3_level3_gb10 import Gb10, REGISTERED_GPU_LOCK, check_mapping_read, need
 from evolveengine.v3_level3_source import SourceContract
@@ -57,7 +57,7 @@ def fresh(path):
 
 def implementation_pins():
     """Pin the exact hardware-side driver bytes, not just image/workload IDs."""
-    modules = ('artifacts','build','chat_timing','components','component_driver','collect','deploy','diagnostic','evidence','eos','trajectory','trajectory_lane','gb10','lifecycle','run','weight_audit','sampling','sampling_lane','scoring',
+    modules = ('artifacts','build','chat_timing','components','component_driver','collect','deploy','diagnostic','evidence','eos','long_ctx','trajectory','trajectory_lane','gb10','lifecycle','run','weight_audit','sampling','sampling_lane','scoring',
                'source','startup','upload','worker','worker_channel','worker_spool','holdout','workload')
     module_paths = [ROOT/f'evolveengine/v3_level3_{mod}.py' for mod in modules]
     module_paths.extend((ROOT/'evolveengine/v3_provider.py',ROOT/'evolveengine/v3_runner.py',
@@ -101,6 +101,12 @@ def checked_inputs(path, expected, *, allow_legacy=False, split_registration=Non
     if 'eos_contract' in doc:
         expected_keys.add('eos_contract')
         need(registered and doc['eos_contract'] == eos.PROTOCOL, 'unknown development EOS contract')
+    if 'anchor_long_ctx' in doc:
+        expected_keys.update({'anchor_long_ctx', 'anchor_long_ctx_sha256', 'long_ctx_cases', 'long_ctx_cases_sha256'})
+        need(registered and bf16_mode
+             and SHA.fullmatch(str(doc.get('anchor_long_ctx_sha256', '')))
+             and SHA.fullmatch(str(doc.get('long_ctx_cases_sha256', ''))),
+             'invalid long-context logprob anchor registration')
     if 'timing_text' in doc:
         expected_keys.add('timing_text')
         binding = doc['timing_text']
@@ -123,6 +129,8 @@ def checked_inputs(path, expected, *, allow_legacy=False, split_registration=Non
     path_fields = ('lock','archive','model_dir','anchor_d3','anchor_r1','memory_calibration')
     if not bf16_mode:
         path_fields = (*path_fields, 'weight')
+    if 'anchor_long_ctx' in doc:
+        path_fields = (*path_fields, 'anchor_long_ctx', 'long_ctx_cases')
     for field in path_fields:
         item = Path(doc[field])
         need(item.is_absolute() and item.resolve(strict=True)==item and not any(c in str(item) for c in ',"\n\r'),
@@ -170,14 +178,26 @@ WORKBUDDY_SCENES = {
     'W3': ((12288, 128),) * 8,
     'W4': ((12288, 128),) * 6 + ((16384, 128),) * 2,
 }
+WORKBUDDY_V2_SCENES = {
+    'W1': ((2048, 256),),
+    'W2': ((16384, 64),),
+    'W3': ((12288, 128),) * 8,
+    'W4': ((12288, 128),) * 6 + ((16384, 128),) * 2,
+    'W5': ((12288, 128),) * 20,
+    'G64K': ((64000, 64),),
+}
+WORKBUDDY_V2_SCENE_WARM = {'W3': 2, 'G64K': 0}
+WORKBUDDY_V2_SCENE_TIMED = {'W3': 4, 'W4': 4, 'W5': 2, 'G64K': 1}
 WORKBUDDY_WARM = 1
 WORKBUDDY_TIMED = 2
 
 
 def collector_pins(timing_text=None, *, eos_contract=None, anchor_d3_sha256=None, anchor_r1_sha256=None,
-                   launch_profile=None, legacy_wb_observer_name=False):
+                   launch_profile=None, legacy_wb_observer_name=False,
+                   anchor_long_ctx_sha256=None, long_ctx_cases_sha256=None):
     plan = json.loads((DEV/'plan.json').read_bytes())
-    wb = launch_profile == BF16_WORKBUDDY_64K
+    wb_v2 = launch_profile == BF16_WORKBUDDY_64K_V2
+    wb = launch_profile in WORKBUDDY_PROFILES
     wb_obs = HERE/'observe_workbuddy_timing.py'
     if timing_text is None:
         timing_files = TIMING
@@ -190,19 +210,29 @@ def collector_pins(timing_text=None, *, eos_contract=None, anchor_d3_sha256=None
     t_hash = {n:digest(source_bytes(p)) for n,p in timing_files.items()}
     q_files = quality_files(eos_contract, text_observer=wb_obs if (wb and legacy_wb_observer_name) else None)
     q_hash = {n:digest(source_bytes(p)) for n,p in q_files.items()}
+    q_cases = (*QUALITY_CASES, LONG_CTX_CASE) if anchor_long_ctx_sha256 else QUALITY_CASES
     rule = dict(anchor_manifests={'numeric':anchor_d3_sha256 or D3,'eos':anchor_r1_sha256 or R1},judge_sha256={
         p.relative_to(ROOT).as_posix():digest(source_bytes(p)) for p in JUDGE},observer_sha256=q_hash,
-        cases=QUALITY_CASES,memory_stages=MEMORY_STAGES)
+        cases=q_cases,memory_stages=MEMORY_STAGES)
     if eos_contract:
         rule['eos_contract'] = eos_contract
         rule['judge_sha256']['evolveengine/v3_level3_eos.py'] = digest(source_bytes(Path(eos.__file__)))
-    scenes = WORKBUDDY_SCENES if wb else {k:tuple(map(tuple,v)) for k,v in plan['scenes'].items()}
+    if anchor_long_ctx_sha256:
+        from evolveengine import v3_level3_long_ctx as long_ctx
+        rule['long_context'] = dict(anchor_sha256=anchor_long_ctx_sha256, cases_sha256=long_ctx_cases_sha256)
+        rule['judge_sha256']['evolveengine/v3_level3_long_ctx.py'] = digest(source_bytes(Path(long_ctx.__file__)))
+    scenes = WORKBUDDY_V2_SCENES if wb_v2 else (WORKBUDDY_SCENES if wb else {k:tuple(map(tuple,v)) for k,v in plan['scenes'].items()})
     warm_waves = WORKBUDDY_WARM if wb else plan['warm_waves']
     timed_waves = WORKBUDDY_TIMED if wb else plan['timed_waves']
+    score_rule = WORKBUDDY_V2_SCORE_RULE if wb_v2 else (WORKBUDDY_SCORE_RULE if wb else DEV_SCORE_RULE)
     timing = dict(scenes=scenes,warm_waves=warm_waves,timed_waves=timed_waves,observer_sha256=t_hash,
-                  score_rule=WORKBUDDY_SCORE_RULE if wb else DEV_SCORE_RULE)
+                  score_rule=score_rule)
     if wb:
         timing['workbuddy_sla'] = True
+    if wb_v2:
+        timing['workbuddy_v2'] = True
+        timing['scene_warm_waves'] = dict(WORKBUDDY_V2_SCENE_WARM)
+        timing['scene_timed_waves'] = dict(WORKBUDDY_V2_SCENE_TIMED)
     if timing_text is not None:
         timing['input_plan'] = dict(distribution=DISTRIBUTION, corpus_sha256=timing_text['corpus_sha256'],
                                     seed=timing_text['seed'])
@@ -238,15 +268,21 @@ def setup_baseline(root, settings, config_pin):
     text_spec = settings.get('timing_text')
     eos_contract = settings.get('eos_contract')
     bf16_mode = settings.get('model_format') == 'bf16_safetensors'
-    wb = settings.get('launch_profile') == BF16_WORKBUDDY_64K
+    wb_v2 = settings.get('launch_profile') == BF16_WORKBUDDY_64K_V2
+    wb = settings.get('launch_profile') in WORKBUDDY_PROFILES
     wb_obs = HERE/'observe_workbuddy_timing.py'
-    legacy_wb_name = (wb and 'observe_workbuddy_timing.py' not in settings['observer_sha256']
+    legacy_wb_name = (wb and not wb_v2 and 'observe_workbuddy_timing.py' not in settings['observer_sha256']
                       and settings['observer_sha256'].get('observe_text_timing.py') == digest(source_bytes(wb_obs)))
     d3_pin = settings.get('anchor_d3_sha256') if bf16_mode else None
     r1_pin = settings.get('anchor_r1_sha256') if bf16_mode else None
+    lc_anchor = Path(settings['anchor_long_ctx']) if 'anchor_long_ctx' in settings else None
+    lc_sha = settings.get('anchor_long_ctx_sha256')
+    lc_cases_path = Path(settings['long_ctx_cases']) if 'long_ctx_cases' in settings else None
+    lc_cases_sha = settings.get('long_ctx_cases_sha256')
     rule,timing = collector_pins(text_spec, eos_contract=eos_contract, anchor_d3_sha256=d3_pin,
                                  anchor_r1_sha256=r1_pin, launch_profile=settings.get('launch_profile'),
-                                 legacy_wb_observer_name=legacy_wb_name)
+                                 legacy_wb_observer_name=legacy_wb_name,
+                                 anchor_long_ctx_sha256=lc_sha, long_ctx_cases_sha256=lc_cases_sha)
     qhash,thash = (digest(canonical(x)+b'\n') for x in (rule,timing))
     need(settings['observer_sha256']=={**timing['observer_sha256'],**rule['observer_sha256']} and
          (qhash,thash)==(settings['quality_rule_sha256'],settings['measure_workload_sha256']),
@@ -258,6 +294,12 @@ def setup_baseline(root, settings, config_pin):
     manifests = rule['anchor_manifests']
     for folder, name, group in ((d3,'anchor.jsonl','numeric'),(r1,'e0a.jsonl','eos'),(r1,'e0b.jsonl','eos')):
         trusted_reference(folder,name,manifests[group])
+    lc_cases_bytes = None
+    if lc_anchor is not None:
+        from evolveengine import v3_level3_long_ctx as long_ctx
+        long_ctx.verify_anchor(lc_anchor, lc_sha)
+        long_ctx.verify_cases(lc_cases_path, lc_cases_sha)
+        lc_cases_bytes = lc_cases_path.read_bytes()
     plan = json.loads((DEV/'plan.json').read_bytes())
     if bf16_mode:
         model_files = tuple(sorted(settings['model_manifest'].items()))
@@ -277,11 +319,13 @@ def setup_baseline(root, settings, config_pin):
     contract = (SourceContract.acquire_spark26_bf16_e0(Path(settings['archive'])) if bf16_mode
                 else SourceContract.acquire_spark26_e0(Path(settings['archive']),ROOT))
     engine = contract.from_args({'files':{}})
-    p = EvidencePolicy(engine.digest,report['worker_id'],report['boot_id'],host.gpu_uuid,weights,{},qhash,QUALITY_CASES,
+    q_cases = (*QUALITY_CASES, LONG_CTX_CASE) if lc_cases_bytes is not None else QUALITY_CASES
+    p = EvidencePolicy(engine.digest,report['worker_id'],report['boot_id'],host.gpu_uuid,weights,{},qhash,q_cases,
                        thash,digest(b'no profiler lane in E0 preflight'),timing['scenes'],timing['warm_waves'],
                        timing['timed_waves'],MEMORY_STAGES,E0_MEMORY_GUARD_BYTES,('not-invoked',),
                        counter_names=('not-invoked',),origin='hardware_collection',memory_source=calibration['source'],
-                       score_rule=WORKBUDDY_SCORE_RULE if wb else None, workbuddy_sla=wb)
+                       score_rule=timing['score_rule'] if wb else None, workbuddy_sla=wb, workbuddy_v2=wb_v2,
+                       scene_warm_waves=timing.get('scene_warm_waves'), scene_timed_waves=timing.get('scene_timed_waves'))
     svc = DockerService(spec,docker=host.docker,diagnostics=root/'service-diagnostics')
     backend = NativeBuildBackend(root/'build-store',image=settings['build_image'],limits=BuildLimits(**settings['limits']))
     grade = eos.grade if eos_contract else quality
@@ -291,7 +335,9 @@ def setup_baseline(root, settings, config_pin):
               (WORKBUDDY_TIMING if wb else TEXT_TIMING)))
     collectors = {
         'develop_quality':QualityCollector(host,spec,p,q_obs,rule['observer_sha256'],
-                                           score=lambda rows:grade(rows,d3,r1,d3_manifest=d3_pin,r1_manifest=r1_pin),rule=rule),
+                                           score=lambda rows:grade(rows,d3,r1,d3_manifest=d3_pin,r1_manifest=r1_pin,
+                                                                   long_ctx_anchor=lc_anchor,long_ctx_sha256=lc_sha),
+                                           rule=rule,long_ctx_cases_bytes=lc_cases_bytes),
         'develop_measure':TimingCollector(host,spec,p,t_obs,
                                           timing['observer_sha256'],input_plan=timing.get('input_plan'),documents=corpus),
     }
