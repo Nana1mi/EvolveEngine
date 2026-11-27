@@ -1,6 +1,6 @@
 # Gemini 交接 · EvolveEngine Level 3 切换到原版 BF16
 
-更新于 2026-11-26。接手入口为本仓库 `main`。当前工程轨迹使用 Spark-X2.6-1.7B GGUF Q8_0，已在段末暂停。接下来的目标是用同一模型的原版 BF16 检查点建立独立的基线和探索轨迹。控制器、Harness、可信 Worker、评测框架和看板可以复用。新的模型资产、数值参考、Worker 准入和性能曲线各自登记。
+更新于 2026-11-27。接手入口为本仓库 `main`。当前工程轨迹使用 Spark-X2.6-1.7B GGUF Q8_0，已在段末暂停。接下来的目标是用同一模型的原版 BF16 检查点建立独立的基线和探索轨迹。控制器、Harness、可信 Worker、评测框架和看板可以复用。新的模型资产、数值参考、Worker 准入和性能曲线各自登记。
 
 ## 先从这里接手
 
@@ -24,7 +24,7 @@ flowchart LR
 
 - Agent 自己选择 Engine 和 Harness 的改动、研究与迭代顺序。Engine、激活的 Harness、已验证事实和显式保存的 WIP 可跨段继承。Controller 持有授权与账本，Worker 决定回执的正确性、隔离与性能状态，Agent 负责提名。正常换段与异常恢复分别记录，恢复使用已验证的检查点。
 - 现有 `objective-exploration.json` 是 Q8_0 自由探索模板。DeepSeek Flash Max 的模型配置、累计预算策略和外层记账与目标引擎精度相互独立。探索继续保留完整的 API Token/费用、墙钟、节点占用和各 GPU 作业时间。新 BF16 模板应绑定新的资产与策略标识。 [自由探索配置](experiments/spark26_gguf/level3/objective-exploration.json)
-- 现有外部研究模式 `deepseek_open_v1` 会在启动时把系统提示改为允许读当前上游代码。历史补充协议选择 E0 时间边界。BF16 新登记前应按项目负责人已选的边界处理，把实际出站配置和 Broker 过滤与登记对齐，覆盖搜索摘要、重定向、版本不明和镜像来源。研究复用保留 URL、版本、许可证与归因。 [启动器](experiments/spark26_gguf/level3/launch_live.py) · [补充协议](experiments/spark26_gguf/level3/PROTOCOL-ADDENDUM-v1.md)
+- **BF16 自由探索的外部研究边界：开放（`deepseek_open_v1`）。** 项目负责人于 2026-11-27 确认，这条 BF16 工程轨迹不采用[补充协议 §2](experiments/spark26_gguf/level3/PROTOCOL-ADDENDUM-v1.md#2-sglang-时间边界和来源b1b3f1)的 E0 时间限制。Agent 可以按需通过 Research Broker 查阅公开技术资料，包括 E0 之后的 SGLang 上游代码、PR、Issue 和其他公开实现；不强制搜索次数。开放的是**参考资料**，不是基线：E0 仍锁定原提交，候选仍须通过 BF16 权重、正确性、隔离和配对性能门。Agent 容器不直连外网；现网、私有数据、凭据、留出 Q/T 和 Judge 内部材料仍不可访问或外传。采用外部实现或思路时，登记 URL、可核实的提交或版本、许可证与改动归因；将移植或借鉴和未观察到直接参考的方案分开报告，不把开放轨迹当作 E0 时间受限的独立发现证据。启动计划显式登记这一研究模式；历史轨迹、正式 W 和 B0/B2 的规则不随本决定变更。 [启动器](experiments/spark26_gguf/level3/launch_live.py)
 - 运行拓扑是开发机上的 Controller/Pi、独立 GB10 Worker、另一台 Linux 主机上的看板。保持 Worker 独占与统一 GPU 锁，可信 Controller 通过 `EE_L3_WORKER_SSH_HOST`、`EE_L3_WORKER_SSH_USER` 和 `EE_L3_WORKER_SSH_ED25519` 绑定目标和主机指纹。认证凭据通过既有操作员渠道提供。负责测速的节点只承担实验所需负载。 [实机入口](experiments/spark26_gguf/level3/node_preflight.py) · [看板部署](observatory/README.md)
 
 ## 源码导航

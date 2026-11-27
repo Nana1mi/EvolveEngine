@@ -30,6 +30,8 @@ OPERATIONS = ('develop_quality', 'develop_measure', 'develop_profile')
 # Ratios combine these scene-specific quantities; raw latency/throughput never disappear.
 DEV_SCORE_RULE = {'W1':'decode_tokens_per_s','W2':'decode_tokens_per_s',
                   'W3':'reciprocal_ttft_per_s','W4':'wave_output_tokens_per_s'}
+WORKBUDDY_SCORE_RULE = {'W1':'decode_tokens_per_s','W2':'reciprocal_ttft_per_s',
+                        'W3':'decode_tokens_per_s','W4':'wave_output_tokens_per_s'}
 REPORTS = ('cuda_gpu_trace', 'cuda_gpu_kern_sum', 'cuda_api_sum')
 COUNTER_UNAVAILABLE = {'not_requested', 'unsupported', 'permission_denied', 'no_samples',
                        'unsupported_export_schema'}
@@ -84,6 +86,8 @@ class EvidencePolicy:
     sampling_required: bool = False
     replay_protocol: str | None = None
     measure_input_lengths: Mapping | None = None
+    score_rule: Mapping[str, str] | None = None
+    workbuddy_sla: bool = False
 
 
 @dataclass(frozen=True)
@@ -357,7 +361,8 @@ def _policy(p):
     _need(isinstance(p.scenes, Mapping) and set(p.scenes) == {'W1', 'W2', 'W3', 'W4'} and
           _uint(p.warm_waves, 1) and _uint(p.timed_waves, 1), 'invalid controller timing coverage')
     for scene, shape in p.scenes.items():
-        _need(type(shape) is tuple and len(shape) == (4 if scene == 'W4' else 1) and all(
+        lanes_ok = (len(shape) >= 1) if p.workbuddy_sla else (len(shape) == (4 if scene == 'W4' else 1))
+        _need(type(shape) is tuple and lanes_ok and all(
             type(x) is tuple and len(x) == 2 and _uint(x[0], 1) and _uint(x[1], 2) for x in shape),
             'invalid scene shape')
     _need(p.origin in ('offline_fixture', 'hardware_collection') and _names(p.counter_names)
@@ -506,13 +511,14 @@ def _measure(row, p, path):
         shape, reqs = p.scenes[scene], wave['requests']
         _need(type(reqs) is list and len(reqs) == len(shape), 'incomplete wave request coverage')
         starts, firsts, lasts, dones, ttft, tpot, lengths = [], [], [], [], [], [], []
+        req_tps, req_p95_itl = [], []
         for lane, (r, (n, out)) in enumerate(zip(reqs, shape)):
             rid = r['rid']
             start, first, last, done = (r[k] for k in ('start_ns', 'first_ns', 'last_ns', 'done_ns'))
             generated = r['output']
             if p.measure_input_lengths is not None:
                 right_shape=r['input']==p.measure_input_lengths[scene][i][lane]
-            elif p.chat_corpus_sha256 and scene == 'W3':
+            elif p.chat_corpus_sha256 and scene == 'W3' and not p.workbuddy_sla:
                 from .v3_level3_chat_timing import W3_INPUT_RANGE
 
                 right_shape = W3_INPUT_RANGE[0] <= r['input'] <= W3_INPUT_RANGE[1]
@@ -554,7 +560,7 @@ def _measure(row, p, path):
                     if p.natural_eos:
                         request_outputs[scene][prompt] = dict(sha256=r['sha256'], tokens=generated,
                                                                finish_reason=r['finish_reason'])
-                    if p.chat_corpus_sha256 and scene == 'W3':
+                    if p.chat_corpus_sha256 and scene == 'W3' and not p.workbuddy_sla:
                         visible = r['visible_answer_ns']
                         _need(visible is None or (_uint(visible) and first <= visible <= last),
                               'invalid visible-answer timing')
@@ -584,7 +590,14 @@ def _measure(row, p, path):
             ttft.append((first - start) / 1e6)
             lengths.append(generated)
             if generated > 1:
-                tpot.append((last - first) / (generated - 1) / 1e6)
+                req_tpot = (last - first) / (generated - 1) / 1e6
+                tpot.append(req_tpot)
+                if p.workbuddy_sla:
+                    req_tps.append(1000.0 / req_tpot)
+            if p.workbuddy_sla:
+                p95_val = r.get('p95_itl_ms')
+                _need(type(p95_val) in (int, float) and p95_val >= 0, 'missing WorkBuddy p95_itl_ms')
+                req_p95_itl.append(float(p95_val))
             if p.natural_eos and wave['timed'] and scene == 'W4':
                 concurrent.append(dict(wave=i, lane=lane, tokens=generated, finish_reason=r['finish_reason'],
                                        tpot_ms=(last-first)/(generated-1)/1e6 if generated > 1 else None,
@@ -597,12 +610,19 @@ def _measure(row, p, path):
             ttft_ms = median(ttft)
             tpot_ms = median(tpot) if tpot else None
             overall = sum(lengths) * 1e9 / (b-a)
-            rule = DEV_SCORE_RULE[scene]
+            rule = (p.score_rule or DEV_SCORE_RULE)[scene]
             score = {'decode_tokens_per_s':1000/tpot_ms if tpot_ms else None,
                      'reciprocal_ttft_per_s':1000/ttft_ms,'wave_output_tokens_per_s':overall}[rule]
             numbers = dict(ttft_ms=ttft_ms,tpot_ms=tpot_ms,output_toks_per_s=overall,dev_score=score)
             if p.natural_eos:
                 numbers.update(output_tokens=sum(lengths), e2e_ms=median((d-s)/1e6 for s,d in zip(starts,dones)))
+            if p.workbuddy_sla:
+                numbers.update(
+                    share_ge_40_tps=sum(v >= 40.0 for v in req_tps) / len(reqs),
+                    share_ge_50_tps=sum(v >= 50.0 for v in req_tps) / len(reqs),
+                    p95_itl_ms=max(req_p95_itl) if req_p95_itl else 0.0,
+                    unfinished_count=0,
+                )
             metrics[scene].append(numbers)
     _need(_disjoint(windows), 'timing waves overlap')
     def measured(values):
@@ -623,7 +643,8 @@ def _measure(row, p, path):
         data['concurrent_requests'] = concurrent
         if p.chat_corpus_sha256:
             data['chat_corpus_sha256'] = p.chat_corpus_sha256
-            data['w3_requests'] = w3_requests
+            if not p.workbuddy_sla:
+                data['w3_requests'] = w3_requests
     if p.measure_input_hashes is not None:
         for summary in speculative.values():
             summary['accept_rate'] = summary['accepted'] / summary['proposed'] if summary['proposed'] else None
@@ -868,7 +889,8 @@ def validate_evidence(root: Path, policy: EvidencePolicy, receipt_sha256: Mappin
             elif op == 'develop_measure':
                 if policy.measure_input_hashes is not None:
                     raw_inputs = paths['timing-inputs.json'].read_bytes()
-                    _need(len(raw_inputs) <= 2 << 20 and
+                    max_inputs_bytes = (32 << 20) if policy.workbuddy_sla else (2 << 20)
+                    _need(len(raw_inputs) <= max_inputs_bytes and
                           input_fingerprints(_json(raw_inputs)) == policy.measure_input_hashes,
                           'materialized timing request plan differs')
                     if policy.measure_input_lengths is not None:

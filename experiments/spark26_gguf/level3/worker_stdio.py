@@ -26,7 +26,7 @@ from experiments.spark26_gguf.level3 import control_run, native_controls, replay
 from experiments.spark26_gguf.level3.node_preflight import (
     E0_MEMORY_GUARD_BYTES, canonical, checked_inputs, digest, fresh, need, setup_baseline, write,
 )
-from evolveengine.v3_level3_weight_audit import POLICY as WEIGHT_AUDIT
+from evolveengine.v3_level3_weight_audit import POLICIES as WEIGHT_AUDITS, POLICY as WEIGHT_AUDIT
 from evolveengine.v3_level3_artifacts import DevelopmentArtifacts
 from evolveengine.v3_level3_worker import NativeWorker, WorkerResult
 from evolveengine.v3_level3_collect import QUALITY_CASES, stage_inputs
@@ -66,7 +66,7 @@ def authorization(path, pin):
             need(row['jobs'] is None and control_run._sha(controls['natural_workload_sha256'])
                  and 'develop_profile' in row['max_per_op'], 'invalid natural workload registration')
         if 'weight_audit' in controls:
-            need(controls['weight_audit'] == WEIGHT_AUDIT and 'chat_workload' in controls, 'unsupported weight audit policy')
+            need(controls['weight_audit'] in WEIGHT_AUDITS and 'chat_workload' in controls, 'unsupported weight audit policy')
         if 'trajectory_calibration' in controls:
             ref=controls['trajectory_calibration']
             need('chat_workload' in controls and type(ref) is dict and set(ref)=={'path','sha256'} and
@@ -151,7 +151,7 @@ def graph_replay_peak(replay, *, telemetry_only=False):
 def engineering_ceiling(settings, contract_engine, calibration, controls):
     path = Path(controls['replay'])
     replay = control_run.read_pinned(path, controls['replay_sha256'])
-    peak = graph_replay_peak(replay, telemetry_only=controls.get('weight_audit') == WEIGHT_AUDIT)
+    peak = graph_replay_peak(replay, telemetry_only=controls.get('weight_audit') in WEIGHT_AUDITS)
     registration = (path.parent/'registration.json').read_bytes()
     prior = json.loads(registration)
     prior_config = prior['config']
@@ -173,7 +173,7 @@ def engineering_ceiling(settings, contract_engine, calibration, controls):
              and record['observation_sha256'] == record['result']['data']['receipt_id']
              and record['observation_sha256'] == digest((path.parent/operation/operation/'receipt.json').read_bytes()),
              'Graph replay receipt differs from its archived observation')
-    return None if controls.get('weight_audit') == WEIGHT_AUDIT else peak + control_run.MARGIN_BYTES
+    return None if controls.get('weight_audit') in WEIGHT_AUDITS else peak + control_run.MARGIN_BYTES
 
 
 class EngineeringWorker(NativeWorker):
@@ -215,44 +215,45 @@ class EngineeringWorker(NativeWorker):
         need(build.operation == 'develop_build' and build.status == 'built' and build.engine == engine.digest
              and self.verify(build), 'profiling requires a verified deployment')
         need(type(workload) is dict and workload.keys() <= {'scenes','windows','inputs'}, 'invalid profile workload')
-        plan = json.loads(timing.workload)
-        scenes = workload.get('scenes', list(plan['scenes']))
-        count = workload.get('windows', 1)
-        need(type(scenes) is list and scenes and all(type(s) is str and s in plan['scenes'] for s in scenes)
-             and len(set(scenes)) == len(scenes) and type(count) is int and 1 <= count <= plan['timed_waves'],
-             'invalid profile scenes or windows')
-        custom = workload.get('inputs')
-        if custom is not None:
-            need(type(custom) is dict and set(custom) == set(scenes), 'custom inputs must match profile scenes')
-            for scene in scenes:
-                waves = custom[scene]
-                shape = plan['scenes'][scene]
-                need(type(waves) is list and len(waves) == count, 'invalid profile request window count')
-                for wave in waves:
-                    need(type(wave) is list and len(wave) == len(shape), 'invalid profile request count')
-                    for ids, (length, _) in zip(wave, shape):
-                        need(type(ids) is list and len(ids) == length and
-                             all(type(t) is int and 0 <= t < 131072 for t in ids), 'invalid profile token IDs')
-            inputs = custom
-        else:
-            inputs = profile_inputs(timing.schedule.documents, {s:plan['scenes'][s] for s in scenes},
-                                    count, timing.schedule.seed, getattr(timing, 'chat_schedule', None))
-        plan.update(scenes={s: plan['scenes'][s] for s in scenes}, warm_waves=0, timed_waves=count)
-        plan.pop('w3_visible_answer',None)
-        plan.pop('replay_protocol',None)  # no raw timing-output witnesses in publishable diagnostics
         deployment = self.deployments[build.evidence]
         began = monotonic()
         deadline = began + cap/1000
         root = self.root / ('profile-' + token_hex(12))
         root.mkdir(mode=0o700)
-        traffic = root / 'inputs'
-        stage_inputs(traffic, {**timing.files, 'workload.json':canonical(plan), 'inputs.json':canonical(inputs)})
         try:
+            plan = json.loads(timing.workload)
+            scenes = workload.get('scenes', list(plan['scenes']))
+            count = workload.get('windows', 1)
+            need(type(scenes) is list and scenes and all(type(s) is str and s in plan['scenes'] for s in scenes)
+                 and len(set(scenes)) == len(scenes) and type(count) is int and 1 <= count <= plan['timed_waves'],
+                 'invalid profile scenes or windows')
+            custom = workload.get('inputs')
+            if custom is not None:
+                need(type(custom) is dict and set(custom) == set(scenes), 'custom inputs must match profile scenes')
+                for scene in scenes:
+                    waves = custom[scene]
+                    shape = plan['scenes'][scene]
+                    need(type(waves) is list and len(waves) == count, 'invalid profile request window count')
+                    for wave in waves:
+                        need(type(wave) is list and len(wave) == len(shape), 'invalid profile request count')
+                        for ids, (length, _) in zip(wave, shape):
+                            need(type(ids) is list and len(ids) == length and
+                                 all(type(t) is int and 0 <= t < 131072 for t in ids), 'invalid profile token IDs')
+                inputs = custom
+            else:
+                inputs = profile_inputs(timing.schedule.documents, {s:plan['scenes'][s] for s in scenes},
+                                        count, timing.schedule.seed, getattr(timing, 'chat_schedule', None))
+            plan.update(scenes={s: plan['scenes'][s] for s in scenes}, warm_waves=0, timed_waves=count)
+            plan.pop('w3_visible_answer',None)
+            plan.pop('replay_protocol',None)  # no raw timing-output witnesses in publishable diagnostics
+            traffic = root / 'inputs'
+            stage_inputs(traffic, {**timing.files, 'workload.json':canonical(plan), 'inputs.json':canonical(inputs)})
+            script = 'observe_workbuddy_timing.py' if 'observe_workbuddy_timing.py' in timing.files else 'observe_text_timing.py'
             service = ProfileService(timing.service_spec, mode='e0_graph', docker=timing.host.docker,
                                      diagnostics=root/'service-diagnostics')
             with self.exclusive(deadline), service.start(deployment, 'ee-l3-job-'+root.name, deadline) as live:
                 timing.observer(live, traffic, root, min(deadline-90, began+DURATION-5),
-                                script='observe_text_timing.py')
+                                script=script)
                 service.collect_trace(live, root, deadline)
             manifest = root/'development-artifacts.json'
             files = json.loads(manifest.read_bytes())
@@ -265,7 +266,7 @@ class EngineeringWorker(NativeWorker):
             if isinstance(exc, CleanupUncertain):
                 self.quarantined = True
                 raise
-            data = dict(non_scoring=True, failure=type(exc).__name__)
+            data = dict(non_scoring=True, failure=type(exc).__name__, detail=str(exc)[:240])
             status = 'incomplete_non_scoring'
         elapsed = int((monotonic()-began)*1000)
         need(elapsed <= cap, 'profile lease overrun')
@@ -414,8 +415,11 @@ def make_worker(root, settings, registration, lease, lease_pin, *, scope, contro
         if registered is None:
             lane=TrajectoryCollector(quality,scripts(HERE))
             lane.activate(ref,registration,e0.digest)
+            d3_pin = settings.get('anchor_d3_sha256')
+            r1_pin = settings.get('anchor_r1_sha256')
             quality.enable_trajectory(ref['sha256'],lane.code,
-                lambda rows:grade(rows,Path(settings['anchor_d3']),Path(settings['anchor_r1']),paired=True))
+                lambda rows:grade(rows,Path(settings['anchor_d3']),Path(settings['anchor_r1']),paired=True,
+                                  d3_manifest=d3_pin,r1_manifest=r1_pin))
         else:
             from experiments.spark26_gguf.level3.live_split_quality import enable, restore_teacher
             lane=enable(quality,settings,ref,controls['split_quality'],registration,e0,registered)

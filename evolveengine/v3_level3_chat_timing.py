@@ -14,7 +14,9 @@ W3_INPUT_RANGE = (3990, 4202)
 GENERALIZATION = 'paired-short-long-v1'
 
 
-def bounds(scene, nominal, split, wave):
+def bounds(scene, nominal, split, wave, *, workbuddy=False):
+    if workbuddy:
+        return (nominal, nominal)
     if split != 'generalization': return W3_INPUT_RANGE if scene=='W3' else (nominal,nominal)
     lo,hi = W3_INPUT_RANGE if scene=='W3' else (3*nominal//4,5*nominal//4)
     return (lo,nominal-1) if wave%2==0 else (nominal+1,hi)
@@ -24,7 +26,7 @@ def length_map(inputs):
     return {s:tuple(tuple(map(len,w)) for w in waves) for s,waves in inputs.items()}
 
 
-def load_chat(ref, tokenizer_pin, template_pin, scenes, warm, timed, *, split='development', engine=None):
+def load_chat(ref, tokenizer_pin, template_pin, scenes, warm, timed, *, split='development', engine=None, workbuddy=False):
     _require(type(ref) is dict and set(ref) == {'path', 'sha256'} and _sha(ref['sha256']),
              'invalid chat workload reference')
     path = Path(ref['path'])
@@ -62,7 +64,7 @@ def load_chat(ref, tokenizer_pin, template_pin, scenes, warm, timed, *, split='d
                          all(type(row[k]) is str and 0 < len(row[k]) <= 512 for k in ('source','license','source_id','task')),
                          'missing chat request provenance')
                 ids = row['ids']
-                lower, upper = bounds(scene,input_len,split,wave_index)
+                lower, upper = bounds(scene,input_len,split,wave_index,workbuddy=workbuddy)
                 _require(type(ids) is list and lower <= len(ids) <= upper and
                          all(type(i) is int and 0 <= i < 131072 for i in ids), 'chat request input length differs')
                 key = (row['source'],row['source_id'])

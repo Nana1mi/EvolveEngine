@@ -17,9 +17,24 @@ from evolveengine.v3_level3_worker import ObservationUnavailable
 HERE=Path(__file__).resolve().parent
 ROOT=HERE.parents[2]
 SCHEMA='spark26-live-split-quality-registration-v1'
+BF16_SCHEMA='spark26-bf16-live-split-quality-registration-v1'
 OVERLAY_CHANGES=frozenset((*('experiments/spark26_gguf/level3/'+n for n in ('node_preflight.py','worker_stdio.py')),
     *('evolveengine/v3_level3_'+n+'.py' for n in ('collect','evidence','trajectory_lane','worker'))))
 OPTIONAL_OVERLAY_CHANGES = frozenset({'experiments/spark26_gguf/level3/profile_control.py'})
+BF16_OVERLAY_CHANGES = frozenset({
+    'experiments/spark26_gguf/level3/bf16_controls.py',
+    'experiments/spark26_gguf/level3/node_preflight.py',
+    'experiments/spark26_gguf/level3/worker_stdio.py',
+    'experiments/spark26_gguf/level3/profile_control.py',
+    'evolveengine/v3_level3_collect.py',
+    'evolveengine/v3_level3_workload.py',
+    'evolveengine/v3_level3_startup.py',
+    'evolveengine/v3_level3_components.py',
+    'evolveengine/v3_level3_web_research.py',
+    'evolveengine/v3_level3_scoring.py',
+    'evolveengine/v3_level3_deploy.py',
+    'evolveengine/v3_level3_run.py',
+})
 TEACHER_SOURCE={
     'registration': {'path':'/var/tmp/ee-l3-thinking-chat.X45fJZlz/build-registration.json',
                      'sha256':'2b2dc1aabb65e2a01c2ccbdc0b97aadadbe3a4167c11589af64f3f7fb154bb34'},
@@ -53,6 +68,14 @@ def extra_sources():
 
 
 def verify_overlay(baseline, live, registration):
+    if registration.get('schema') == BF16_SCHEMA:
+        changes = registration.get('implementation_overlay')
+        need(type(changes) is dict and baseline.keys() == live.keys()
+             and set(changes) <= BF16_OVERLAY_CHANGES & baseline.keys()
+             and {k for k in baseline if baseline[k] != live[k]} == set(changes)
+             and all(changes[k] == [baseline[k], live[k]] for k in changes),
+             'BF16 live split overlay changes unregistered baseline code')
+        return
     changes=registration['implementation_overlay']
     changed_paths = set(changes)
     need(baseline.keys()==live.keys() and OVERLAY_CHANGES <= changed_paths <= OVERLAY_CHANGES | OPTIONAL_OVERLAY_CHANGES
@@ -63,6 +86,18 @@ def verify_overlay(baseline, live, registration):
 
 def read_registration(path, sha, baseline, calibration):
     row=read(path,sha)
+    if row.get('schema') == BF16_SCHEMA:
+        need(set(row)=={'schema','protocol','baseline','calibration','implementation_overlay','sources','observer','teacher','teacher_source'}
+             and (row['protocol'],row['baseline'],row['calibration'])==(SPLIT_PROTOCOL,baseline,calibration)
+             and type(row['implementation_overlay']) is dict
+             and set(row['implementation_overlay']) <= BF16_OVERLAY_CHANGES
+             and row['sources']==extra_sources()
+             and pin(row['observer']) and pin(row['teacher'])
+             and type(row['teacher_source']) is dict and set(row['teacher_source'])=={'registration','build'}
+             and all(type(row['teacher_source'][k]) is dict and set(row['teacher_source'][k])=={'path','sha256'}
+                     and pin(row['teacher_source'][k]['sha256']) for k in ('registration','build')),
+             'BF16 live split registration differs from the signed observation protocol')
+        return row
     need(set(row)=={'schema','protocol','baseline','calibration','implementation_overlay','sources','proofs','observer','teacher','teacher_source'}
          and (row['schema'],row['protocol'],row['baseline'],row['calibration'])==(SCHEMA,SPLIT_PROTOCOL,baseline,calibration)
          and row['sources']==extra_sources() and row['teacher_source']==TEACHER_SOURCE and row['proofs']==PROOFS
@@ -151,7 +186,10 @@ def enable(quality, settings, ref, split_ref, registration, e0, registered):
     from evolveengine.v3_level3_eos import grade
     lane=LiveTailLane(quality,scripts(HERE),HERE/'isolation_cache_parity.py')
     lane.activate(ref,registration,e0.digest,split_ref=split_ref,registered=registered)
+    d3_pin = settings.get('anchor_d3_sha256')
+    r1_pin = settings.get('anchor_r1_sha256')
     quality.enable_trajectory(ref['sha256'],lane.code,
-        lambda rows:grade(rows,Path(settings['anchor_d3']),Path(settings['anchor_r1']),paired=True),
+        lambda rows:grade(rows,Path(settings['anchor_d3']),Path(settings['anchor_r1']),paired=True,
+                          d3_manifest=d3_pin,r1_manifest=r1_pin),
         split_pin=split_ref['sha256'])
     return lane

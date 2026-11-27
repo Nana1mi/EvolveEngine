@@ -11,6 +11,8 @@ from tempfile import NamedTemporaryFile
 from .v3_harness import canonical, digest
 
 POLICY = 'q8-external-review-v1'
+BF16_POLICY = 'bf16-external-review-v1'
+POLICIES = frozenset({POLICY, BF16_POLICY})
 PROVISIONAL = 'provisional_pending_weight_review'
 AGENT_NOTICE = ('Memory measurements are telemetry, never a development score or an E0-relative limit. '
     'You may trade memory for time using CUDA Graph, KV cache, speculative buffers, transient per-tile '
@@ -18,10 +20,22 @@ AGENT_NOTICE = ('Memory measurements are telemetry, never a development score or
     'alternate decoded or requantized target weights, including partial BF16/FP16, FP8 or Q4 copies. '
     'Hardware/OOM, isolation and correctness checks remain in force. All gains are provisional until '
     'independent host review of the actual built runtime; a file hash or a clean scan alone is not approval.')
-CAST = re.compile(r'dequant|requant|quantize|float8|\bfp8|\bq4|bfloat16|float16|\.half\(|\.to\s*\(', re.I)
+BF16_AGENT_NOTICE = ('Memory measurements are telemetry, never a development score or an E0-relative limit. '
+    'Target compute uses the pinned original BF16 weights with BF16 KV cache. You may trade memory for time '
+    'using CUDA Graph, KV cache, speculative buffers, transient in-arithmetic conversions, FP32 accumulation '
+    'and bit-exact lossless BF16 layout rearrangement. Do not persist any FP8, INT8, FP4 or other non-BF16 '
+    'target weight copies across operations or requests, including partial layers or lm_head. '
+    'Hardware/OOM, isolation and correctness checks remain in force. All gains are provisional until '
+    'independent host review of the actual built runtime; a file hash or a clean scan alone is not approval.')
+CAST = re.compile(r'dequant|requant|quantize|float8|\bfp8|\bfp4|\bint8|\bint4|\bnf4|\bq4|bfloat16|float16|\.half\(|\.to\s*\(', re.I)
 STORE = re.compile(r'register_buffer|(?:self|module|model|layer)\.[\w.]+\s*=|(?:cache|table|weights?)\w*\s*\[|\b(?:static|global)\b', re.I)
 SHAPE = re.compile(r'(?:empty|zeros|ones|full)_like\s*\(|(?:weight|qweight)\w*\.(?:shape|size)', re.I)
-DTYPE = re.compile(r'dtype|float|half|\bq4|\bfp8', re.I)
+DTYPE = re.compile(r'dtype|float|half|\bq4|\bfp8|\bfp4|\bint8|\bint4|\bnf4', re.I)
+
+
+def agent_notice(policy):
+    need(policy in POLICIES, 'unsupported weight audit policy')
+    return BF16_AGENT_NOTICE if policy == BF16_POLICY else AGENT_NOTICE
 
 
 def need(ok, message):
@@ -105,19 +119,21 @@ def memory_hint(candidate, reference):
                 investigate_growth_over_300_mib=delta > 300*(1<<20))
 
 
-def bandwidth_hint(data):
+def bandwidth_hint(data, *, policy=POLICY):
+    limit = 12.5 if policy == BF16_POLICY else 6.7
     out = {}
     for scene in ('W1','W2'):
         diag = (data.get('speculation') or {}).get('timed', {}).get(scene, {})
         spec = ('reported_speculation' if diag.get('proposed',0) or diag.get('verifies',0) else
                 'reported_no_proposals' if diag.get('requests') and diag.get('reported') == diag['requests'] else 'unknown')
         tpot = data.get('scenes',{}).get(scene,{}).get('tpot_ms')
-        out[scene] = dict(tpot_ms=tpot, speculation=spec, below_screening_estimate=(tpot < 6.7 if tpot is not None else None),
-            investigate=tpot is not None and tpot < 6.7 and spec != 'reported_speculation')
+        out[scene] = dict(tpot_ms=tpot, speculation=spec, below_screening_estimate=(tpot < limit if tpot is not None else None),
+            investigate=tpot is not None and tpot < limit and spec != 'reported_speculation')
     return out
 
 
-def packet(folder, contract, engine, chosen, build, quality, reference, timings, *, trigger, context, source_cache=None):
+def packet(folder, contract, engine, chosen, build, quality, reference, timings, *, trigger, context, source_cache=None, policy=POLICY):
+    need(policy in POLICIES, 'unsupported weight audit policy')
     need(trigger in ('historical_best','checkpoint','final_nomination'), 'unknown weight audit trigger')
     need(chosen['engine'] == engine.digest == quality['engine'] == build['engine'] and
          chosen['build'] == build['evidence'] == quality['build'] and chosen['quality'] == quality['evidence'],
@@ -130,35 +146,38 @@ def packet(folder, contract, engine, chosen, build, quality, reference, timings,
         if source_cache is not None: source_cache[engine.digest] = (source_pin, findings)
     else:
         source_pin, findings = cached
-    doc = dict(policy=POLICY, gain_status=PROVISIONAL, trigger=trigger, context=context, chosen=chosen,
+    limit_label = '12.5' if policy == BF16_POLICY else '6.7'
+    doc = dict(policy=policy, gain_status=PROVISIONAL, trigger=trigger, context=context, chosen=chosen,
         baseline=contract.baseline, source_sha256=source_pin, static=findings,
         build=build, quality=quality, e0_quality=reference,
         memory=memory_hint(quality['data'], reference['data']),
-        paired_timing=[dict(receipt=j['evidence'], comparison=j['performance'], bandwidth=bandwidth_hint(j['data'])) for j in timings],
+        paired_timing=[dict(receipt=j['evidence'], comparison=j['performance'], bandwidth=bandwidth_hint(j['data'], policy=policy)) for j in timings],
         limitations=['Observed stages are snapshots, not continuous allocator peaks.',
-                     '6.7 ms/token is an uncalibrated single-stream screening estimate, not a physical bound.',
+                     f'{limit_label} ms/token is an uncalibrated single-stream screening estimate, not a physical bound.',
                      'Speculation diagnostics are self-reported; unknown is not disabled.',
                      'Hashes and static analysis cannot exclude hidden Native copies. Independently inspect runtime representation and lifetime.'])
     raw = wire(doc); key = digest(raw); store(folder/'packets'/f'{key}.json', raw); return key
 
 
 CHECKS = ('gguf_integrity','runtime_representation','persistent_alternate_copies')
+BF16_CHECKS = ('safetensors_integrity','runtime_representation','persistent_low_precision_copies')
 
 
 def packet_read(folder, key):
     raw=(folder/'packets'/f'{pin(key)}.json').read_bytes(); need(digest(raw)==key,'audit packet hash changed')
-    doc=json.loads(raw); need(doc['policy']==POLICY,'unexpected audit policy')
+    doc=json.loads(raw); need(doc['policy'] in POLICIES,'unexpected audit policy')
     raw_source=(folder/'sources'/f"{pin(doc['source_sha256'])}.json").read_bytes()
     need(digest(raw_source)==doc['source_sha256'],'audit candidate source changed')
     return doc
 
 
 def check_report(doc, key, report):
+    expected_checks = BF16_CHECKS if doc.get('policy') == BF16_POLICY else CHECKS
     need(report.get('packet_sha256') == key and report.get('chosen') == doc['chosen'] and
          report.get('decision') in ('approved','rejected','inconclusive') and
          isinstance(report.get('reviewer'),str) and report['reviewer'].strip(), 'review not bound to packet and candidate')
-    checks=report.get('checks'); need(isinstance(checks,dict) and set(checks)==set(CHECKS) and
-         all(isinstance(checks[k],str) and checks[k].strip() for k in CHECKS), 'expected independent findings for all three checks')
+    checks=report.get('checks'); need(isinstance(checks,dict) and set(checks)==set(expected_checks) and
+         all(isinstance(checks[k],str) and checks[k].strip() for k in expected_checks), 'expected independent findings for all three checks')
     pin(report.get('runtime_evidence_sha256'))
 
 
@@ -169,10 +188,11 @@ def file_digest(path):
     return result.hexdigest()
 
 
-def check_runtime(path, chosen):
-    # An external reviewer's observation, not candidate telemetry or an original GGUF hash.
+def check_runtime(path, chosen, *, policy=POLICY):
+    expected_schema = 'bf16-runtime-witness-v1' if policy == BF16_POLICY else 'q8-runtime-witness-v1'
+    # An external reviewer's observation, not candidate telemetry or an original weight hash.
     evidence=json.loads(path.read_bytes()); need(isinstance(evidence,dict) and
-        evidence.get('schema')=='q8-runtime-witness-v1' and evidence.get('chosen')==chosen and
+        evidence.get('schema')==expected_schema and evidence.get('chosen')==chosen and
         isinstance(evidence.get('method'),str) and evidence['method'].strip(), 'wrong or missing runtime witness binding')
     stages=evidence.get('observations'); need(isinstance(stages,list) and stages and all(isinstance(s,dict) and
         all(isinstance(s.get(k),str) and s[k].strip() for k in ('stage','representation','lifetime','raw_observation'))
@@ -193,7 +213,7 @@ def record_review(folder, key, report, runtime_evidence):
             tmp.close();temp.unlink();raise
     try:
         h=report['runtime_evidence_sha256']; need(temp.stat().st_size and file_digest(temp)==h,'runtime evidence missing or changed')
-        if report['decision']=='approved': check_runtime(temp,doc['chosen'])
+        if report['decision']=='approved': check_runtime(temp,doc['chosen'],policy=doc['policy'])
         try: os.link(temp,blobs/h)
         except FileExistsError: need(file_digest(blobs/h)==h,'archived runtime evidence changed')
     finally: temp.unlink()
@@ -212,7 +232,7 @@ def approved(folder, key, chosen):
     raw=path.read_bytes(); report=json.loads(raw);check_report(doc,key,report)
     need(doc['trigger']=='final_nomination' and doc['chosen']==chosen and report['decision']=='approved', 'final weight review not approved for this build')
     blob=folder/'runtime-evidence'/report['runtime_evidence_sha256'];need(blob.is_file() and blob.stat().st_size and file_digest(blob)==blob.name,'runtime evidence missing or changed')
-    check_runtime(blob,chosen)
+    check_runtime(blob,chosen,policy=doc['policy'])
     return report,digest(raw)
 
 

@@ -19,8 +19,10 @@ from evolveengine.v3_harness import canonical, digest
 from evolveengine.v3_level3_build import BuildLimits, NativeBuildBackend, compare_cold_builds, IMAGE
 from evolveengine import v3_level3_eos as eos
 from evolveengine.v3_level3_collect import MEMORY_STAGES, QUALITY_CASES, QualityCollector, TimingCollector, source_bytes, write
-from evolveengine.v3_level3_deploy import GRAPH_PROFILES, DockerService, ServiceSpec
-from evolveengine.v3_level3_evidence import DEV_SCORE_RULE, EvidencePolicy, parse_nvidia_smi_device_memory
+from evolveengine.v3_level3_deploy import BF16_WORKBUDDY_64K, GRAPH_PROFILES, DockerService, ServiceSpec
+from evolveengine.v3_level3_evidence import (
+    DEV_SCORE_RULE, WORKBUDDY_SCORE_RULE, EvidencePolicy, parse_nvidia_smi_device_memory,
+)
 from evolveengine.v3_level3_gb10 import Gb10, REGISTERED_GPU_LOCK, check_mapping_read, need
 from evolveengine.v3_level3_source import SourceContract
 from evolveengine.v3_level3_worker import NativeWorker
@@ -37,6 +39,7 @@ D3 = 'dc937a78d2c6de9dd87323b62b9a89d159d9dcef77b2adab19f8484b5922f6da'
 R1 = '6b13527eaf7796ca42e4d9c66554be2ca09740cd23c7a152d1c87e3e9decd127'
 TIMING = {'observe_timing.py':HERE/'observe_timing.py','timing.py':DEV/'timing.py'}
 TEXT_TIMING = {**TIMING,'observe_text_timing.py':HERE/'observe_text_timing.py'}
+WORKBUDDY_TIMING = {**TIMING,'observe_workbuddy_timing.py':HERE/'observe_workbuddy_timing.py'}
 QUALITY = {'observe_quality.py':HERE/'observe_quality.py',**{n:DEV/n for n in ('numeric.py','legacy_eos.py')}}
 JUDGE = (DEV/'audit_worker.py',DEV/'node_client.py',DEV/'plan.json',DEV/'model.sha256',
          HERE.parent/'g1_d2'/'audit.py',HERE.parent/'g1_d2'/'probe.py',HERE.parent/'g1_d3'/'screen.py',
@@ -59,7 +62,7 @@ def implementation_pins():
     module_paths = [ROOT/f'evolveengine/v3_level3_{mod}.py' for mod in modules]
     module_paths.extend((ROOT/'evolveengine/v3_provider.py',ROOT/'evolveengine/v3_runner.py',
                          ROOT/'evolveengine/v3_level3_web_research.py'))
-    paths = [HERE/'repeat_e0.py',HERE/'calibrate_trajectory.py',HERE/'observe_trajectory.py',HERE/'node_preflight.py',HERE/'worker_stdio.py',HERE/'profile_control.py',HERE/'calibrate_nvml_pid.py',
+    paths = [HERE/'bf16_controls.py',HERE/'repeat_e0.py',HERE/'calibrate_trajectory.py',HERE/'observe_trajectory.py',HERE/'node_preflight.py',HERE/'worker_stdio.py',HERE/'profile_control.py',HERE/'calibrate_nvml_pid.py',
              HERE/'calibrate_cuda_meter.py',*JUDGE,
              *module_paths,
              ROOT/'evolveengine/journal.py',ROOT/'evolveengine/v3_harness.py']
@@ -75,10 +78,20 @@ def checked_inputs(path, expected, *, allow_legacy=False, split_registration=Non
     need(type(doc) is dict and doc.get('schema') in ((SCHEMA,LEGACY_SCHEMA) if allow_legacy else (SCHEMA,)),
          'unregistered configuration version')
     registered = doc['schema']==SCHEMA
-    expected_keys = {'schema','boot_id','gpu_uuid','lock','archive','model_dir','weight','anchor_d3',
+    expected_keys = {'schema','boot_id','gpu_uuid','lock','archive','model_dir','anchor_d3',
          'anchor_r1','build_image','build_image_id','runtime_image','runtime_image_id','limits','node_ms','observer_sha256',
          'quality_rule_sha256','measure_workload_sha256','memory_calibration','memory_calibration_sha256',
          'native_backend_sha256'}
+    bf16_mode = doc.get('model_format') == 'bf16_safetensors'
+    if bf16_mode:
+        expected_keys.update({'model_format', 'model_manifest', 'anchor_d3_sha256', 'anchor_r1_sha256'})
+        need(registered and type(doc.get('model_manifest')) is dict and doc['model_manifest']
+             and all(type(k) is str and type(v) is str and SHA.fullmatch(v) for k, v in doc['model_manifest'].items())
+             and SHA.fullmatch(str(doc.get('anchor_d3_sha256', '')))
+             and SHA.fullmatch(str(doc.get('anchor_r1_sha256', ''))),
+             'invalid BF16 model or anchor manifest registration')
+    else:
+        expected_keys.add('weight')
     if registered:
         expected_keys.add('implementation_sha256')
     if 'launch_profile' in doc:
@@ -107,7 +120,10 @@ def checked_inputs(path, expected, *, allow_legacy=False, split_registration=Non
         verify_overlay(doc['implementation_sha256'],implementation_pins(),split_registration)
     need(doc['native_backend_sha256']==digest((ROOT/'evolveengine/v3_level3_build.py').read_bytes()),
          'Native build driver differs from registration')
-    for field in ('lock','archive','model_dir','weight','anchor_d3','anchor_r1','memory_calibration'):
+    path_fields = ('lock','archive','model_dir','anchor_d3','anchor_r1','memory_calibration')
+    if not bf16_mode:
+        path_fields = (*path_fields, 'weight')
+    for field in path_fields:
         item = Path(doc[field])
         need(item.is_absolute() and item.resolve(strict=True)==item and not any(c in str(item) for c in ',"\n\r'),
              'registration path not a resolved local asset')
@@ -142,23 +158,51 @@ def inventory(host, deadline, build_image=None, runtime_image=None):
     return dict(kind='node_preflight_only',**data,checks=checks)
 
 
-def quality_files(eos_contract):
+def quality_files(eos_contract, *, text_observer=None):
     need(eos_contract in (None, eos.PROTOCOL), 'unknown development EOS contract')
-    return QUALITY if eos_contract is None else {**QUALITY,'observe_text_timing.py':HERE/'observe_text_timing.py'}
+    obs = text_observer or (HERE/'observe_text_timing.py')
+    return QUALITY if eos_contract is None else {**QUALITY,'observe_text_timing.py':obs}
 
 
-def collector_pins(timing_text=None, *, eos_contract=None):
+WORKBUDDY_SCENES = {
+    'W1': ((2048, 256),),
+    'W2': ((16384, 64),),
+    'W3': ((12288, 128),) * 8,
+    'W4': ((12288, 128),) * 6 + ((16384, 128),) * 2,
+}
+WORKBUDDY_WARM = 1
+WORKBUDDY_TIMED = 2
+
+
+def collector_pins(timing_text=None, *, eos_contract=None, anchor_d3_sha256=None, anchor_r1_sha256=None,
+                   launch_profile=None, legacy_wb_observer_name=False):
     plan = json.loads((DEV/'plan.json').read_bytes())
-    t_hash = {n:digest(source_bytes(p)) for n,p in (TIMING if timing_text is None else TEXT_TIMING).items()}
-    q_hash = {n:digest(source_bytes(p)) for n,p in quality_files(eos_contract).items()}
-    rule = dict(anchor_manifests={'numeric':D3,'eos':R1},judge_sha256={
+    wb = launch_profile == BF16_WORKBUDDY_64K
+    wb_obs = HERE/'observe_workbuddy_timing.py'
+    if timing_text is None:
+        timing_files = TIMING
+    elif wb and legacy_wb_observer_name:
+        timing_files = {**TIMING, 'observe_text_timing.py': wb_obs}
+    elif wb:
+        timing_files = WORKBUDDY_TIMING
+    else:
+        timing_files = TEXT_TIMING
+    t_hash = {n:digest(source_bytes(p)) for n,p in timing_files.items()}
+    q_files = quality_files(eos_contract, text_observer=wb_obs if (wb and legacy_wb_observer_name) else None)
+    q_hash = {n:digest(source_bytes(p)) for n,p in q_files.items()}
+    rule = dict(anchor_manifests={'numeric':anchor_d3_sha256 or D3,'eos':anchor_r1_sha256 or R1},judge_sha256={
         p.relative_to(ROOT).as_posix():digest(source_bytes(p)) for p in JUDGE},observer_sha256=q_hash,
         cases=QUALITY_CASES,memory_stages=MEMORY_STAGES)
     if eos_contract:
         rule['eos_contract'] = eos_contract
         rule['judge_sha256']['evolveengine/v3_level3_eos.py'] = digest(source_bytes(Path(eos.__file__)))
-    scenes = {k:tuple(map(tuple,v)) for k,v in plan['scenes'].items()}
-    timing = dict(scenes=scenes,warm_waves=plan['warm_waves'],timed_waves=plan['timed_waves'],observer_sha256=t_hash,score_rule=DEV_SCORE_RULE)
+    scenes = WORKBUDDY_SCENES if wb else {k:tuple(map(tuple,v)) for k,v in plan['scenes'].items()}
+    warm_waves = WORKBUDDY_WARM if wb else plan['warm_waves']
+    timed_waves = WORKBUDDY_TIMED if wb else plan['timed_waves']
+    timing = dict(scenes=scenes,warm_waves=warm_waves,timed_waves=timed_waves,observer_sha256=t_hash,
+                  score_rule=WORKBUDDY_SCORE_RULE if wb else DEV_SCORE_RULE)
+    if wb:
+        timing['workbuddy_sla'] = True
     if timing_text is not None:
         timing['input_plan'] = dict(distribution=DISTRIBUTION, corpus_sha256=timing_text['corpus_sha256'],
                                     seed=timing_text['seed'])
@@ -193,7 +237,16 @@ def setup_baseline(root, settings, config_pin):
     write(root/'memory-calibration.json',calibration)
     text_spec = settings.get('timing_text')
     eos_contract = settings.get('eos_contract')
-    rule,timing = collector_pins(text_spec, eos_contract=eos_contract)
+    bf16_mode = settings.get('model_format') == 'bf16_safetensors'
+    wb = settings.get('launch_profile') == BF16_WORKBUDDY_64K
+    wb_obs = HERE/'observe_workbuddy_timing.py'
+    legacy_wb_name = (wb and 'observe_workbuddy_timing.py' not in settings['observer_sha256']
+                      and settings['observer_sha256'].get('observe_text_timing.py') == digest(source_bytes(wb_obs)))
+    d3_pin = settings.get('anchor_d3_sha256') if bf16_mode else None
+    r1_pin = settings.get('anchor_r1_sha256') if bf16_mode else None
+    rule,timing = collector_pins(text_spec, eos_contract=eos_contract, anchor_d3_sha256=d3_pin,
+                                 anchor_r1_sha256=r1_pin, launch_profile=settings.get('launch_profile'),
+                                 legacy_wb_observer_name=legacy_wb_name)
     qhash,thash = (digest(canonical(x)+b'\n') for x in (rule,timing))
     need(settings['observer_sha256']=={**timing['observer_sha256'],**rule['observer_sha256']} and
          (qhash,thash)==(settings['quality_rule_sha256'],settings['measure_workload_sha256']),
@@ -206,27 +259,40 @@ def setup_baseline(root, settings, config_pin):
     for folder, name, group in ((d3,'anchor.jsonl','numeric'),(r1,'e0a.jsonl','eos'),(r1,'e0b.jsonl','eos')):
         trusted_reference(folder,name,manifests[group])
     plan = json.loads((DEV/'plan.json').read_bytes())
-    model_files = tuple(tuple(reversed(line.split('  ',1))) for line in (DEV/'model.sha256').read_text().splitlines())
-    spec = ServiceSpec(settings['runtime_image'],settings['runtime_image_id'],Path(settings['model_dir']),model_files,
-                       Path(settings['weight']),plan['weight'],host.gpu_uuid,settings.get('launch_profile','diagnostic_eager'))
+    if bf16_mode:
+        model_files = tuple(sorted(settings['model_manifest'].items()))
+        spec = ServiceSpec(settings['runtime_image'],settings['runtime_image_id'],Path(settings['model_dir']),model_files,
+                           None,None,host.gpu_uuid,settings.get('launch_profile','diagnostic_eager'),model_format='bf16_safetensors')
+    else:
+        model_files = tuple(tuple(reversed(line.split('  ',1))) for line in (DEV/'model.sha256').read_text().splitlines())
+        spec = ServiceSpec(settings['runtime_image'],settings['runtime_image_id'],Path(settings['model_dir']),model_files,
+                           Path(settings['weight']),plan['weight'],host.gpu_uuid,settings.get('launch_profile','diagnostic_eager'))
     weights = spec.recheck_model(deadline=monotonic()+60)
     corpus = None
     if text_spec is not None:
         corpus = load_corpus(text_spec['path'], text_spec['corpus_sha256'], weights['tokenizer.json'])
-        select_inputs(corpus, timing['scenes'], timing['warm_waves']+timing['timed_waves'],
-                      seed=text_spec['seed'], pair=0)
-    contract = SourceContract.acquire_spark26_e0(Path(settings['archive']),ROOT)
+        if not wb:
+            select_inputs(corpus, timing['scenes'], timing['warm_waves']+timing['timed_waves'],
+                          seed=text_spec['seed'], pair=0)
+    contract = (SourceContract.acquire_spark26_bf16_e0(Path(settings['archive'])) if bf16_mode
+                else SourceContract.acquire_spark26_e0(Path(settings['archive']),ROOT))
     engine = contract.from_args({'files':{}})
     p = EvidencePolicy(engine.digest,report['worker_id'],report['boot_id'],host.gpu_uuid,weights,{},qhash,QUALITY_CASES,
                        thash,digest(b'no profiler lane in E0 preflight'),timing['scenes'],timing['warm_waves'],
                        timing['timed_waves'],MEMORY_STAGES,E0_MEMORY_GUARD_BYTES,('not-invoked',),
-                       counter_names=('not-invoked',),origin='hardware_collection',memory_source=calibration['source'])
+                       counter_names=('not-invoked',),origin='hardware_collection',memory_source=calibration['source'],
+                       score_rule=WORKBUDDY_SCORE_RULE if wb else None, workbuddy_sla=wb)
     svc = DockerService(spec,docker=host.docker,diagnostics=root/'service-diagnostics')
     backend = NativeBuildBackend(root/'build-store',image=settings['build_image'],limits=BuildLimits(**settings['limits']))
     grade = eos.grade if eos_contract else quality
+    q_obs = quality_files(eos_contract, text_observer=wb_obs if legacy_wb_name else None)
+    t_obs = (TIMING if corpus is None else
+             ({**TIMING, 'observe_text_timing.py': wb_obs} if legacy_wb_name else
+              (WORKBUDDY_TIMING if wb else TEXT_TIMING)))
     collectors = {
-        'develop_quality':QualityCollector(host,spec,p,quality_files(eos_contract),rule['observer_sha256'],score=lambda rows:grade(rows,d3,r1),rule=rule),
-        'develop_measure':TimingCollector(host,spec,p,TIMING if corpus is None else TEXT_TIMING,
+        'develop_quality':QualityCollector(host,spec,p,q_obs,rule['observer_sha256'],
+                                           score=lambda rows:grade(rows,d3,r1,d3_manifest=d3_pin,r1_manifest=r1_pin),rule=rule),
+        'develop_measure':TimingCollector(host,spec,p,t_obs,
                                           timing['observer_sha256'],input_plan=timing.get('input_plan'),documents=corpus),
     }
     @contextmanager

@@ -67,10 +67,10 @@ def failed_candidate(root,op,engine,lease):
     return audit_boot(root,op,engine,lease,terminated=True)
 
 
-def quality(rows,d3,r1):
-    base={r['i']:r for r in raw_rows(trusted_reference(d3,'anchor.jsonl',D3))};nr=[r for r in rows if r['kind']=='numeric'];need([r['i'] for r in nr]==list(range(32)),'32 fixed positions absent')
+def quality(rows,d3,r1,*,d3_manifest=None,r1_manifest=None):
+    base={r['i']:r for r in raw_rows(trusted_reference(d3,'anchor.jsonl',d3_manifest or D3))};nr=[r for r in rows if r['kind']=='numeric'];need([r['i'] for r in nr]==list(range(32)),'32 fixed positions absent')
     by_position={r['i']:metrics(unpack(base[r['i']],'anchor',r['i']),unpack(r,ROLE,r['i'])) for r in nr};summary=score(by_position)
-    ref=trusted_reference(r1,'e0a.jsonl',R1);ref2=trusted_reference(r1,'e0b.jsonl',R1)
+    ref=trusted_reference(r1,'e0a.jsonl',r1_manifest or R1);ref2=trusted_reference(r1,'e0b.jsonl',r1_manifest or R1)
     ref={r['kind']:r for r in raw_rows(ref)};ref2={r['kind']:r for r in raw_rows(ref2)}
     current={r['kind']:r for r in rows if r['kind'] in KINDS};need(all(k in current for k in KINDS) and len(rows)==32+3+len(KINDS),'EOS receipt missing')
     need(current['identity']==dict(kind='identity',label=ROLE,eos=1,vocab=131072),'native tokenizer config mismatch')

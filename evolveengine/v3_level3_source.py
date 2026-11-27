@@ -343,6 +343,17 @@ class SourceContract:
                                'overlay_sha256': dict(E0_OVERLAY_SHA256),
                                'overlay_execution_lf_sha256': dict(E0_OVERLAY_LF_SHA256)}, **limits)
 
+    @classmethod
+    def acquire_spark26_bf16_e0(cls, archive_path, **limits):
+        """Build unmodified BF16 E0 from the exact pinned SGLang archive (no GGUF overlay)."""
+        inventory = read_source_archive(archive_path, expected_sha256=SGLANG_ARCHIVE_SHA256,
+                                        expected_root=ARCHIVE_ROOT)
+        files = dict(inventory.files)
+        _need(HELPER not in files and {LOADER, MODEL} <= files.keys(), 'unexpected BF16 E0 archive inputs')
+        return cls(files, modes=inventory.modes, links=inventory.links, directories=inventory.directories,
+                   provenance={'revision': SGLANG_REVISION, 'archive_sha256': inventory.archive_sha256,
+                               'target_precision': 'bf16', 'overlay': None}, **limits)
+
     def _check_edit_path(self, path):
         _path(path)
         _need(_editable(path) and (path not in self._files or path in self.editable),

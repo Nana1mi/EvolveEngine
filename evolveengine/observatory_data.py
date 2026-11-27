@@ -9,10 +9,11 @@ import sqlite3
 from contextlib import closing
 
 from .schema import canonical, digest as object_digest
-from .v3_level3_scoring import weighted_score
+from .v3_level3_scoring import weighted_score, weights_for
 
 SCENES = ('W1', 'W2', 'W3', 'W4')
-METRICS = ('output_toks_per_s', 'tpot_ms', 'ttft_ms', 'e2e_ms', 'dev_score')
+METRICS = ('output_toks_per_s', 'tpot_ms', 'ttft_ms', 'e2e_ms', 'dev_score',
+           'share_ge_40_tps', 'share_ge_50_tps', 'p95_itl_ms', 'unfinished_count')
 WORKER_OPS = frozenset('develop_build develop_quality develop_measure develop_profile develop_diagnostic'.split())
 STATUSES = frozenset('''built valid observed violation insufficient_evidence build_failed
     cleanup_uncertain timeout timed_out uncertain completed_non_scoring incomplete_non_scoring
@@ -526,6 +527,9 @@ def collect_operator_measurements(out, root, seen):
             or not out['source_ref'] or sidecar.get('approval_sha256') != out['source_ref']
             or not out['baseline'] or not isinstance(records, list) or len(records) > 100):
         return
+    reg_doc = read_json(safe(root, 'registration.json'))
+    scoring_cfg = mapping(reg_doc.get('business_scoring'))
+    run_weights = scoring_cfg.get('weight_percent') or weights_for(scoring_cfg.get('version'))
     published = {point['id'] for point in out['points']}
     for row in map(mapping, records):
         engine, receipt, build, quality, ref = (pin(row.get(key)) for key in ('engine', 'timing', 'build', 'quality', 'reference'))
@@ -540,7 +544,7 @@ def collect_operator_measurements(out, root, seen):
         reported = num(row.get('weighted_score'))
         if set(scene_ratios) != set(SCENES) or min(scene_ratios.values()) <= 0 or reported is None:
             continue
-        score = weighted_score(scene_ratios)
+        score = weighted_score(scene_ratios, run_weights)
         if not isclose(score, reported, rel_tol=1e-9):
             continue
         index = len(out['points']) + 1

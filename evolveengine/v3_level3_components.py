@@ -31,7 +31,12 @@ def _kind(path):
     if path.startswith('test/'):
         return 'test'
     if path.startswith(('python/sglang/srt/', 'python/sglang/kernels/')) and not path.startswith(AOT_ROOT + '/'):
-        if leaf.suffix in ('.py', '.pyi', '.json') and leaf.name != '__init__.py':
+        if leaf.suffix in ('.py', '.pyi', '.json'):
+            return 'python'
+        if path.startswith('python/sglang/kernels/jit/') and leaf.suffix in NATIVE_EXT:
+            return 'python'
+    if path.startswith('python/sglang/jit_kernel/') and not path.startswith(AOT_ROOT + '/'):
+        if leaf.suffix in ('.py', '.pyi', '.json') or leaf.suffix in NATIVE_EXT:
             return 'python'
     return None
 

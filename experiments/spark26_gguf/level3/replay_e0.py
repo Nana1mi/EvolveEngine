@@ -20,7 +20,7 @@ from experiments.spark26_gguf.level3 import control_run, node_preflight as node
 from evolveengine.v3_harness import canonical, digest
 from evolveengine.v3_level3_build import BuildReceipt, BuildRequest, FileHash, verify_artifacts
 from evolveengine.v3_level3_collect import write
-from evolveengine.v3_level3_deploy import IMMEDIATE_GRAPH_WIRE, launch_args, stage_deployment
+from evolveengine.v3_level3_deploy import BF16_WORKBUDDY_64K, IMMEDIATE_GRAPH_WIRE, launch_args, stage_deployment
 from evolveengine.v3_level3_evidence import file_sha256, validate_evidence
 
 
@@ -95,7 +95,7 @@ def adapt_graph_delta_quality(quality):
     quality.policy = replace(quality.policy, quality_rule_sha256=digest(canonical(quality.rule)+b'\n'))
 
 
-def run(root, registration, registration_pin, build_file, build_pin, *, build_registration=None):
+def run(root, registration, registration_pin, build_file, build_pin, *, build_registration=None, chat=None):
     build_settings, build_registration_pin = build_registration or (registration, registration_pin)
     check_build_compatibility(registration, build_settings)
     write(root/'replay-plan.json',dict(kind='pinned_wheel_replay_not_E0_E0_pair',registration_sha256=registration_pin,
@@ -106,8 +106,10 @@ def run(root, registration, registration_pin, build_file, build_pin, *, build_re
           actions=('develop_quality','develop_measure'),paid_api_calls=0))
     contract,e0,backend,service,exclusive,collectors,*_ = node.setup_baseline(root,registration,registration_pin)
     write(root/'launch-argv.json',dict(profile=service.spec.launch_profile,argv=launch_args(service.spec)))
-    if service.spec.launch_profile == IMMEDIATE_GRAPH_WIRE:
+    if service.spec.launch_profile in (IMMEDIATE_GRAPH_WIRE, BF16_WORKBUDDY_64K):
         adapt_graph_delta_quality(collectors['develop_quality'])
+    if chat is not None:
+        collectors['develop_measure'].enable_natural_eos(chat)
     native,build = restore_build(build_file,build_pin,contract=contract,e0=e0,backend=backend,
                                  registration=build_settings,registration_pin=build_registration_pin)
     deployment = stage_deployment(native,root/'deployment')
@@ -147,18 +149,32 @@ def main():
     ap.add_argument('--build-sha256',required=True)
     ap.add_argument('--build-registration', type=Path)
     ap.add_argument('--build-registration-sha256')
+    ap.add_argument('--chat-workload', type=Path)
+    ap.add_argument('--chat-workload-sha256')
+    ap.add_argument('--split-registration', type=Path)
+    ap.add_argument('--split-registration-sha256')
     args = ap.parse_args()
     if bool(args.build_registration) != bool(args.build_registration_sha256):
         ap.error('prior registration and fingerprint must be supplied together')
+    if bool(args.chat_workload) != bool(args.chat_workload_sha256):
+        ap.error('chat workload and fingerprint must be supplied together')
+    if bool(args.split_registration) != bool(args.split_registration_sha256):
+        ap.error('split registration and fingerprint must be supplied together')
     os.umask(0o077)
-    settings = node.checked_inputs(args.registration,args.registration_sha256,allow_legacy=True)
+    split_reg = None
+    if args.split_registration:
+        split_reg = control_run.read_pinned(args.split_registration, args.split_registration_sha256)
+    settings = node.checked_inputs(args.registration,args.registration_sha256,allow_legacy=True,split_registration=split_reg)
     prior = None
     if args.build_registration:
         prior = (control_run.read_pinned(args.build_registration, args.build_registration_sha256),
                  args.build_registration_sha256)
+    chat = None
+    if args.chat_workload:
+        chat = dict(path=str(args.chat_workload.resolve()), sha256=args.chat_workload_sha256)
     root = node.fresh(args.report_dir)
     try:
-        print(run(root,settings,args.registration_sha256,args.build,args.build_sha256,build_registration=prior))
+        print(run(root,settings,args.registration_sha256,args.build,args.build_sha256,build_registration=prior,chat=chat))
     except (Exception,KeyboardInterrupt) as exc:
         write(root/'incomplete.json',dict(status='incomplete_no_optimization_claim',kind=type(exc).__name__,reason=str(exc)[:400]))
         raise

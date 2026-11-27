@@ -91,13 +91,18 @@ class WebResearch:
                              failure=error, elapsed_ms=round((monotonic()-started)*1000),
                              ended_utc=datetime.now(timezone.utc).isoformat()))
 
-    def search(self, query, count=10, *, offset=0, cached=False):
+    def search(self, query, count=None, *, limit=None, offset=0, cached=False):
+        if count is not None and limit is not None:
+            require(type(count) is int and type(limit) is int and count == limit,
+                    'conflicting count and limit in research_search')
+        effective = count if count is not None else (limit if limit is not None else 10)
         if cached:
             require(self.cache is not None, 'no optional reference cache')
-            return self.cache.search(query, limit=min(count, 12), offset=offset)
+            require(type(effective) is int and effective >= 1, 'invalid cached search count')
+            return self.cache.search(query, limit=min(effective, 12), offset=offset)
         require(type(query) is str and 0 < len(query) <= 128 and query.strip(), 'invalid DeepSeek query')
-        require(type(count) is int and 1 <= count <= 50 and offset == 0, 'search returns up to 50 live results')
-        number, data = self._call('search', dict(query=query, count=count, need_content=False))
+        require(type(effective) is int and 1 <= effective <= 50 and offset == 0, 'search returns up to 50 live results')
+        number, data = self._call('search', dict(query=query, count=effective, need_content=False))
         results = [{k: row.get(k) for k in ('url','title','snippet','date','site_name')} for row in data['results']]
         return dict(trust='untrusted_reference', source=SCOPE, call=number, results=results)
 

@@ -97,7 +97,7 @@ def _verify(run, contract, proposal_segment=None):
               business.VERSION if scoring['version'] == business.VERSION else scoring)),
           'Business scoring registration does not match the run')
     policy = registration.get('weight_audit')
-    _need(policy == result.get('weight_audit') and policy in (None, weights.POLICY), 'weight review registration mismatch')
+    _need(policy == result.get('weight_audit') and policy in (None, *weights.POLICIES), 'weight review registration mismatch')
     staged = proposal_segment is not None
     if staged:
         _need(policy and type(proposal_segment) is int and proposal_segment > 0 and
@@ -166,7 +166,12 @@ def _verify(run, contract, proposal_segment=None):
             replayed = compare_dev(_measurement(baseline), _measurement(meter),replay_floors=(scoring or {}).get('replay_audit_floors'))
             if scoring:
                 replayed.update(scoring_version=scoring['version'],
-                                weighted_score=business.weighted_score(replayed['scene_ratios']))
+                                weighted_score=business.weighted_score(replayed['scene_ratios'],
+                                                                       scoring.get('weight_percent')))
+                if scoring['version'] == business.WORKBUDDY_VERSION:
+                    sla = business.workbuddy_sla_summary(meter['data'].get('scenes') or {})
+                    if sla:
+                        replayed['workbuddy_sla'] = sla
             if policy: replayed['gain_status'] = weights.PROVISIONAL
             _need(meter.get('performance') == development and _same_measurement(replayed, development),
                   'Development comparison does not replay')
@@ -233,7 +238,8 @@ def export_delivery(run, output, contract, *, proposal_segment=None):
                                              reference=point['development']['reference'],
                                              geomean=point['development']['equal_scene_geomean']) for point in points])
     if 'weight-audit/review.json' in documents:
-        manifest.update(weight_audit=weights.POLICY, gain_status='externally_reviewed',
+        policy = json.loads(documents['registration.json']).get('weight_audit', weights.POLICY)
+        manifest.update(weight_audit=policy, gain_status='externally_reviewed',
                         weight_review=json.loads(documents['weight-audit/review.json']))
     if 'sampling/final.json' in documents: manifest['independent_sampling_sha256']=digest(documents['sampling/final.json'])
     if score is not None:
@@ -288,6 +294,13 @@ def export_delivery(run, output, contract, *, proposal_segment=None):
     return manifest
 
 
+def contract_for_run(run, archive):
+    reg = json.loads((Path(run) / 'registration.json').read_bytes())
+    if reg.get('weight_audit') == weights.BF16_POLICY:
+        return SourceContract.acquire_spark26_bf16_e0(archive)
+    return SourceContract.acquire_spark26_e0(archive, Path(__file__).resolve().parents[1])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('run', type=Path)
@@ -295,7 +308,7 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--proposal-segment',type=int,help='export this explicit, reviewed cold-build nomination of a paused continuous run')
     opts = parser.parse_args()
-    contract = SourceContract.acquire_spark26_e0(opts.archive, Path(__file__).resolve().parents[1])
+    contract = contract_for_run(opts.run, opts.archive)
     print(canonical(export_delivery(opts.run, opts.output, contract, proposal_segment=opts.proposal_segment)).decode())
 
 

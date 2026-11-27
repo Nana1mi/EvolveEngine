@@ -5,8 +5,12 @@ from statistics import mean, stdev
 VERSION = 'interactive-tpot-v2'
 NATURAL_VERSION = 'interactive-tpot-natural-eos-v3'
 CHAT_VERSION = 'interactive-tpot-thinking-chat-v4'
-NATURAL_VERSIONS = {NATURAL_VERSION, CHAT_VERSION}
+WORKBUDDY_VERSION = 'workbuddy-agent-serving-v1'
+CHAT_VERSIONS = {CHAT_VERSION, WORKBUDDY_VERSION}
+NATURAL_VERSIONS = {NATURAL_VERSION, CHAT_VERSION, WORKBUDDY_VERSION}
 WEIGHTS = {'W1': 20, 'W2': 70, 'W3': 5, 'W4': 5}
+WORKBUDDY_WEIGHTS = {'W1': 15, 'W2': 20, 'W3': 30, 'W4': 35}
+SLA_TARGETS_TPS = (40.0, 50.0)
 MIN_PAIRS = 6
 PRECISION_TARGET = 1.015
 # Six alternating E0/E0 pairs on GB10, Graph defaults and the real-text workload.
@@ -18,10 +22,36 @@ LENGTH_DRIFT = 0.10
 STOP_SHARE_DRIFT = 0.10
 
 
-def weighted_score(ratios):
-    if set(ratios) != set(WEIGHTS) or not all(type(v) in (int, float) and isfinite(v) and v > 0 for v in ratios.values()):
+def weights_for(version):
+    return WORKBUDDY_WEIGHTS if version == WORKBUDDY_VERSION else WEIGHTS
+
+
+def weighted_score(ratios, weights=None):
+    table = WEIGHTS if weights is None else weights
+    if set(ratios) != set(table) or not all(type(v) in (int, float) and isfinite(v) and v > 0 for v in ratios.values()):
         raise ValueError('expected four positive finite scene ratios')
-    return exp(sum(weight * log(ratios[scene]) for scene, weight in WEIGHTS.items()) / 100)
+    total = sum(table.values())
+    if total <= 0:
+        raise ValueError('invalid scene weight total')
+    return exp(sum(weight * log(ratios[scene]) for scene, weight in table.items()) / total)
+
+
+def workbuddy_sla_summary(scenes):
+    """Separate business SLA attainment telemetry from positive-ratio exploration scoring."""
+    summary = {}
+    for scene in WEIGHTS:
+        row = scenes.get(scene)
+        if not isinstance(row, dict):
+            continue
+        entry = {}
+        for key in ('share_ge_40_tps', 'share_ge_50_tps', 'ttft_ms', 'p95_itl_ms', 'tpot_ms',
+                    'output_toks_per_s', 'unfinished_count'):
+            val = row.get(key)
+            if type(val) in (int, float) and isfinite(val):
+                entry[key] = val
+        if entry:
+            summary[scene] = entry
+    return summary
 
 
 def paired_w3_ttft(a, b):
@@ -78,10 +108,15 @@ def replay_audit_floors(pairs):
     return {k:max(0., min(v)-REPLAY_AUDIT_MARGIN) for k,v in rates.items()}
 
 
-def natural_policy(calibration_sha256, workload_sha256, envelope, *, chat_corpus=None, replay_floors=None):
+def natural_policy(calibration_sha256, workload_sha256, envelope, *, chat_corpus=None, replay_floors=None, version=None):
     if set(envelope) != set(WEIGHTS) or not all(type(v) in (int, float) and 0 < v <= .05 for v in envelope.values()):
         raise ValueError('invalid natural-EOS calibration envelope')
-    result = dict(policy(), version=CHAT_VERSION if chat_corpus else NATURAL_VERSION, timing_mode='natural_eos',
+    chosen = version or (CHAT_VERSION if chat_corpus else NATURAL_VERSION)
+    if chosen not in NATURAL_VERSIONS:
+        raise ValueError('unknown natural-EOS scoring version')
+    if chosen in CHAT_VERSIONS and not chat_corpus:
+        raise ValueError('chat scoring policy requires chat corpus')
+    result = dict(policy(), version=chosen, weight_percent=dict(weights_for(chosen)), timing_mode='natural_eos',
                   timing_workload_sha256=workload_sha256, e0_calibration_sha256=calibration_sha256,
                   scene_log_envelope=dict(envelope), scene_floors={k: exp(-v) for k, v in envelope.items()})
     if replay_floors is not None:
@@ -90,6 +125,8 @@ def natural_policy(calibration_sha256, workload_sha256, envelope, *, chat_corpus
         result["replay_audit_floors"]=dict(replay_floors)
     if chat_corpus:
         result.update(chat_corpus_sha256=chat_corpus, enable_thinking=True)
+    if chosen == WORKBUDDY_VERSION:
+        result['sla_targets_tps'] = list(SLA_TARGETS_TPS)
     return result
 
 
@@ -98,7 +135,8 @@ def resolve_policy(scoring):
         return policy()
     if isinstance(scoring, dict) and scoring.get('version') in NATURAL_VERSIONS:
         expected = natural_policy(scoring['e0_calibration_sha256'], scoring['timing_workload_sha256'],
-                                  scoring['scene_log_envelope'], chat_corpus=scoring.get('chat_corpus_sha256'), replay_floors=scoring.get('replay_audit_floors'))
+                                  scoring['scene_log_envelope'], chat_corpus=scoring.get('chat_corpus_sha256'),
+                                  replay_floors=scoring.get('replay_audit_floors'), version=scoring['version'])
         if expected == scoring:
             return expected
     raise ValueError('unknown scoring policy')
@@ -160,6 +198,8 @@ def summarize_build(jobs, engine, build, scoring=VERSION):
     """Use every verified comparison of this build; keep diagnostics at any sample size."""
     registered = resolve_policy(scoring)
     floors = registered['scene_floors']
+    weights = registered['weight_percent']
+    primary_scenes = ('W3', 'W4') if registered['version'] == WORKBUDDY_VERSION else ('W1', 'W2')
     positions = {row['evidence']: index for index, row in enumerate(jobs) if 'evidence' in row}
     pairs, ids, inputs = [], set(), set()
     mismatch = False
@@ -174,14 +214,14 @@ def summarize_build(jobs, engine, build, scoring=VERSION):
         if point is None:
             continue
         pair, fingerprint = row['data']['measurement_pair'], row['data']['measurement_inputs_sha256']
-        if (pair in ids or (registered['version'] != CHAT_VERSION and fingerprint in inputs)
+        if (pair in ids or (registered['version'] not in CHAT_VERSIONS and fingerprint in inputs)
                 or point['reference'] not in positions):
             raise ValueError('duplicate or unpaired business measurement')
         ids.add(pair)
         inputs.add(fingerprint)
         first_count += index < positions[point['reference']]
         ratios = point['scene_ratios']
-        weighted_score(ratios)
+        weighted_score(ratios, weights)
         pairs.append(ratios)
     count = len(pairs)
     initial_status = 'timed_output_mismatch' if mismatch else 'workload_drift' if workload_drift else 'needs_repeats'
@@ -200,9 +240,9 @@ def summarize_build(jobs, engine, build, scoring=VERSION):
             result['intervals'][scene] = [lo, hi]
             if hi < floors[scene]:
                 result['below_floor'].append(scene)
-            elif lo < floors[scene] or (scene in ('W1', 'W2') and half > log(PRECISION_TARGET)):
+            elif lo < floors[scene] or (scene in primary_scenes and half > log(PRECISION_TARGET)):
                 result['uncertain_scenes'].append(scene)
-    result['weighted_score'] = weighted_score(result['scene_ratios'])
+    result['weighted_score'] = weighted_score(result['scene_ratios'], weights)
     if mismatch or workload_drift or count < MIN_PAIRS:
         return result
     if first_count * 2 != count:

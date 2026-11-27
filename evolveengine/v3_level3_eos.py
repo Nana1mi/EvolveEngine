@@ -15,11 +15,11 @@ def semantic_stop(ids, finish):
             type(finish) is dict and finish.get('type') == 'stop' and type(finish.get('matched')) is int and finish['matched'] == 1)
 
 
-def _base_without_mixed(rows,d3,r1):
+def _base_without_mixed(rows,d3,r1,*,d3_manifest=None,r1_manifest=None):
     # Preserve the legacy numeric anchors, abort and prompt identity checks; do not
     # require a single-lane/batched comparison once paired isolation is enabled.
     import audit_worker as j
-    base={r['i']:r for r in j.raw_rows(j.trusted_reference(d3,'anchor.jsonl',j.D3))}
+    base={r['i']:r for r in j.raw_rows(j.trusted_reference(d3,'anchor.jsonl',d3_manifest or j.D3))}
     nr=[r for r in rows if r['kind']=='numeric']
     j.need([r['i'] for r in nr]==list(range(32)), 'missing DEV numeric positions')
     measured={r['i']:j.metrics(j.unpack(base[r['i']],'anchor',r['i']),j.unpack(r,j.ROLE,r['i'])) for r in nr}
@@ -28,7 +28,7 @@ def _base_without_mixed(rows,d3,r1):
     j.need(set(current)==set(j.KINDS) and len(rows)==32+len(current) and
            current['identity']==dict(kind='identity',label=j.ROLE,eos=1,vocab=131072),'missing EOS identity or cases')
     j.cancelled(current,j.ROLE); j.vector(current,130); j.vector(current,260)
-    ref={r['kind']:r for r in j.raw_rows(j.trusted_reference(r1,'e0a.jsonl',j.R1))}
+    ref={r['kind']:r for r in j.raw_rows(j.trusted_reference(r1,'e0a.jsonl',r1_manifest or j.R1))}
     matches=0
     for i in range(2):
         expected=j.natural(ref,'e0a','before',i)
@@ -40,12 +40,17 @@ def _base_without_mixed(rows,d3,r1):
                 eos_passed=matches,mixed_passed=None)
 
 
-def grade(rows, d3, r1, *, paired=False):
+def grade(rows, d3, r1, *, paired=False, d3_manifest=None, r1_manifest=None):
     # Legacy parser still authenticates the two anchors, the four prompt/rid pairs,
     # the standalone abort, both additional numeric probes and the mixed chronology.
     from audit_worker import quality
     original = [r for r in rows if r['kind'] != 'natural_stream']
-    legacy = (_base_without_mixed if paired else quality)(original, d3, r1)
+    if paired:
+        legacy = _base_without_mixed(original, d3, r1, d3_manifest=d3_manifest, r1_manifest=r1_manifest)
+    elif d3_manifest is None and r1_manifest is None:
+        legacy = quality(original, d3, r1)
+    else:
+        legacy = quality(original, d3, r1, d3_manifest=d3_manifest, r1_manifest=r1_manifest)
     if set(legacy) != {'status','max_tv','screen','eos_passed','mixed_passed'}:
         raise ValueError('unregistered development judge result')
     captures = [r for r in rows if r['kind'] == 'natural_stream']

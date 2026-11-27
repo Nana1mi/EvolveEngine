@@ -158,7 +158,11 @@ def execute(root, settings, reg_pin, plan, pin):
         ref=plan['trajectory_calibration']; quality=collectors['develop_quality'];lane=TrajectoryCollector(quality,scripts(HERE))
         lane.activate(ref,reg_pin,e0.digest)
         require({d.identity for d in deployments.values()}==lane.teacher_deployments,'calibration and restored deployments differ')
-        quality.enable_trajectory(ref['sha256'],lane.code,lambda rows:grade(rows,Path(settings['anchor_d3']),Path(settings['anchor_r1']),paired=True))
+        d3_pin = settings.get('anchor_d3_sha256')
+        r1_pin = settings.get('anchor_r1_sha256')
+        quality.enable_trajectory(ref['sha256'],lane.code,
+            lambda rows:grade(rows,Path(settings['anchor_d3']),Path(settings['anchor_r1']),paired=True,
+                              d3_manifest=d3_pin,r1_manifest=r1_pin))
         timing_mode['trajectory_calibration_sha256']=ref['sha256']
     new_quality = {}
     if prior_ref is not None:
@@ -211,7 +215,8 @@ def execute(root, settings, reg_pin, plan, pin):
                 summary = dict(arm=arm,scenes=verdict.data['scenes'],receipt=receipt_pin,node_ms=elapsed)
                 if chat:
                     witnesses.append(verdict.data['_private_replay'])
-                    summary['w3_requests'] = verdict.data['w3_requests']
+                    if 'w3_requests' in verdict.data:
+                        summary['w3_requests'] = verdict.data['w3_requests']
                     summary['timed_request_outputs'] = verdict.data['timed_request_outputs']
                 if 'timing_text' in settings:
                     summary.update(measurement_pair=verdict.data['measurement_pair'],

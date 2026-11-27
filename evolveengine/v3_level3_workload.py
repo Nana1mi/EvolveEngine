@@ -45,7 +45,17 @@ def load_corpus(path, pin, tokenizer_pin):
     return [doc['ids'] for doc in docs]
 
 
-def select_inputs(documents, scenes, waves, *, seed, pair, previously_used=frozenset()):
+def _wrapped_stream(documents, min_len):
+    stream = []
+    rot = 0
+    while len(stream) < min_len:
+        for idx in range(len(documents)):
+            stream.extend(documents[(idx + rot) % len(documents)])
+        rot += 1
+    return stream
+
+
+def select_inputs(documents, scenes, waves, *, seed, pair, previously_used=frozenset(), allow_wrap=False):
     """Use the same pair index on both arms. A fresh service gets only its own inputs."""
     _require(_sha(seed) and type(pair) is int and 0 <= pair < (1 << 31), 'invalid timing seed or pair index')
     rng = Random(int.from_bytes(sha256(canonical([DISTRIBUTION, seed, pair])).digest(), 'big'))
@@ -54,26 +64,43 @@ def select_inputs(documents, scenes, waves, *, seed, pair, previously_used=froze
     pool = [(i, 0, len(ids)) for i, ids in enumerate(documents)]
     items = {scene: [[None for _ in spec] for _ in range(waves)] for scene, spec in scenes.items()}
     hashes = set()
+    wrapped = None
     for n, scene, wave, lane in sorted(slots, key=lambda slot: (-slot[0], *slot[1:])):
         for _ in range(128):
             eligible = [(i, end - start - n + 1) for i, (_, start, end) in enumerate(pool) if end - start >= n]
             count = sum(weight for _, weight in eligible)
-            _require(count > 0, 'timing corpus cannot supply nonoverlapping request windows')
-            choice = rng.randrange(count)
-            for pool_index, weight in eligible:
-                if choice < weight:
-                    break
-                choice -= weight
-            doc, start, end = pool[pool_index]
-            offset = start + choice
-            tokens = documents[doc][offset:offset + n]
-            pin = digest(canonical(tokens))
-            if pin in hashes or pin in previously_used or len(set(tokens)) < min(16, n):
-                continue
-            hashes.add(pin)
-            items[scene][wave][lane] = tokens
-            pool[pool_index:pool_index + 1] = [(doc, start, offset), (doc, offset + n, end)]
-            break
+            if count > 0:
+                choice = rng.randrange(count)
+                for pool_index, weight in eligible:
+                    if choice < weight:
+                        break
+                    choice -= weight
+                doc, start, end = pool[pool_index]
+                offset = start + choice
+                tokens = documents[doc][offset:offset + n]
+                pin = digest(canonical(tokens))
+                if pin in hashes or pin in previously_used or len(set(tokens)) < min(16, n):
+                    continue
+                hashes.add(pin)
+                items[scene][wave][lane] = tokens
+                pool[pool_index:pool_index + 1] = [(doc, start, offset), (doc, offset + n, end)]
+                break
+            elif allow_wrap:
+                if wrapped is None:
+                    need_len = max(n * 4, sum(s[0] for s in slots) + 65536)
+                    wrapped = _wrapped_stream(documents, need_len)
+                max_off = len(wrapped) - n
+                _require(max_off >= 0, 'timing corpus cannot supply wrapped request window')
+                offset = rng.randrange(max_off + 1)
+                tokens = wrapped[offset:offset + n]
+                pin = digest(canonical(tokens))
+                if pin in hashes or pin in previously_used or len(set(tokens)) < min(16, n):
+                    continue
+                hashes.add(pin)
+                items[scene][wave][lane] = tokens
+                break
+            else:
+                _require(False, 'timing corpus cannot supply nonoverlapping request windows')
         else:
             raise ValueError('timing corpus cannot supply distinct nondegenerate inputs')
     return items
@@ -88,15 +115,17 @@ def profile_inputs(documents, scenes, count, seed, chat=None):
     """Separate traffic for publishable traces. Never profile any scored chat wave."""
     excluded = ({pin for waves in input_fingerprints(chat.waves).values() for wave in waves for pin in wave}
                 if chat is not None else set())
+    requested = sum(n for shape in scenes.values() for n, _ in shape) * count
+    available = sum(len(doc) for doc in documents)
     return select_inputs(documents, scenes, count, seed=digest(canonical(['profile-only-v1', seed])),
-                         pair=0, previously_used=excluded)
+                         pair=0, previously_used=excluded, allow_wrap=requested > available)
 
 
 class TimingSchedule:
     """Deterministic pair plans without reusing exact prompts across pair indices."""
-    def __init__(self, documents, scenes, waves, seed, *, maximum=MAX_PAIRS):
+    def __init__(self, documents, scenes, waves, seed, *, maximum=MAX_PAIRS, allow_wrap=False):
         self.documents, self.scenes, self.waves, self.seed = documents, scenes, waves, seed
-        self.maximum = maximum
+        self.maximum, self.allow_wrap = maximum, allow_wrap
         self.index, self.current, self.used = -1, None, set()
 
     def get(self, pair):
@@ -106,7 +135,7 @@ class TimingSchedule:
         while self.index < pair:
             index = self.index + 1
             inputs = select_inputs(self.documents, self.scenes, self.waves, seed=self.seed, pair=index,
-                                   previously_used=self.used)
+                                   previously_used=self.used, allow_wrap=self.allow_wrap)
             hashes = input_fingerprints(inputs)
             self.used.update(pin for waves in hashes.values() for wave in waves for pin in wave)
             self.index, self.current = index, (inputs, hashes)

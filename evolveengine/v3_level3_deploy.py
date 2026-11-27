@@ -298,26 +298,38 @@ def runtime_container_args(deployment, *, image, name, gpu_uuid=None, scratch_mi
     return args
 
 
+MODEL_FORMATS = frozenset({'gguf', 'bf16_safetensors'})
+
+
 @dataclass(frozen=True)
 class ServiceSpec:
     image: str
     image_id: str
     model_dir: Path
     model_files: tuple[tuple[str, str], ...]
-    gguf: Path
-    gguf_sha256: str
+    gguf: Path | None
+    gguf_sha256: str | None
     gpu_uuid: str
     launch_profile: str = 'diagnostic_eager'
+    model_format: str = 'gguf'
 
     def recheck_model(self, *, deadline=None):
+        _need(self.model_format in MODEL_FORMATS, 'unsupported model format')
         model = self.model_dir.resolve(strict=True)
-        gguf = self.gguf.resolve(strict=True)
-        _need(model == self.model_dir and model.is_dir() and gguf == self.gguf and gguf.is_file()
-              and ',' not in str(model) and ',' not in str(gguf), 'invalid trusted model asset path')
+        _need(model == self.model_dir and model.is_dir() and ',' not in str(model), 'invalid trusted model asset path')
         files = dict(self.model_files)
         _need(len(files) == len(self.model_files) and {'tokenizer.json','chat_template.jinja'} <= files.keys(),
               'tokenizer/template pins missing')
-        _need(WEIGHT not in files,'GGUF asset must be pinned separately')
+        if self.model_format == 'bf16_safetensors':
+            _need(self.gguf is None and self.gguf_sha256 is None, 'BF16 safetensors spec cannot bind a GGUF file')
+            _need({'config.json', 'model.safetensors.index.json'} <= files.keys()
+                  and any(name.endswith('.safetensors') for name in files),
+                  'BF16 safetensors pins missing')
+        else:
+            _need(self.gguf is not None and self.gguf_sha256 is not None, 'GGUF asset must be pinned')
+            gguf = self.gguf.resolve(strict=True)
+            _need(gguf == self.gguf and gguf.is_file() and ',' not in str(gguf), 'invalid trusted model asset path')
+            _need(WEIGHT not in files,'GGUF asset must be pinned separately')
         seen = {}
         for name, expected in self.model_files:
             _claim(seen,name,'file')
@@ -326,6 +338,9 @@ class ServiceSpec:
                   _hash_file(path,path.stat().st_size,deadline=deadline) == expected,'trusted model asset hash mismatch')
         # Mount neither unregistered tokenizer assets nor model-side executables.
         staged = {path.relative_to(model).as_posix() for path in model.rglob('*') if path.is_file() or path.is_symlink()}
+        if self.model_format == 'bf16_safetensors':
+            _need(staged == files.keys(), 'model directory contains unregistered bytes')
+            return dict(files)
         # A regular empty mount point permits Docker to overlay the separately
         # pinned GGUF file even when the model-directory bind is read-only.
         if WEIGHT in staged:
@@ -348,22 +363,45 @@ LAUNCH = ('-m','sglang.launch_server','--model-path',f'/model/{WEIGHT}','--load-
           '--max-running-requests','4','--attention-backend','triton','--disable-radix-cache','--stream-interval','1',
           '--disable-decode-cuda-graph','--disable-prefill-cuda-graph','--tool-call-parser','spark25',
           '--reasoning-parser','qwen3')
+LAUNCH_BF16 = ('-m','sglang.launch_server','--model-path','/model','--load-format','safetensors',
+               '--dtype','bfloat16','--kv-cache-dtype','bfloat16',
+               '--tokenizer-path','/model','--chat-template','/model/chat_template.jinja','--trust-remote-code',
+               '--host','127.0.0.1','--port','30091','--served-model-name','spark26-bf16','--tp-size','1',
+               '--context-length','8192','--max-total-tokens','16384','--mem-fraction-static','0.4',
+               '--max-running-requests','4','--attention-backend','triton','--disable-radix-cache','--stream-interval','1',
+               '--disable-decode-cuda-graph','--disable-prefill-cuda-graph','--tool-call-parser','spark25',
+               '--reasoning-parser','qwen3')
+LAUNCH_BF16_WORKBUDDY_64K = ('-m','sglang.launch_server','--model-path','/model','--load-format','safetensors',
+                             '--dtype','bfloat16','--kv-cache-dtype','bfloat16',
+                             '--tokenizer-path','/model','--chat-template','/model/chat_template.jinja','--trust-remote-code',
+                             '--host','127.0.0.1','--port','30091','--served-model-name','spark26-bf16','--tp-size','1',
+                             '--context-length','65536','--max-total-tokens','524288','--mem-fraction-static','0.75',
+                             '--max-running-requests','24','--attention-backend','triton','--stream-interval','1',
+                             '--incremental-streaming-output','--tool-call-parser','spark25',
+                             '--reasoning-parser','qwen3')
 
 
 IMMEDIATE_GRAPH_WIRE = 'graph_defaults_incremental'
+BF16_WORKBUDDY_64K = 'bf16_workbuddy_64k'
 GRAPH_PROFILES = {
     'diagnostic_eager': frozenset(),
     'decode_graph': frozenset({'--disable-decode-cuda-graph'}),
     'graph_defaults': frozenset({'--disable-decode-cuda-graph', '--disable-prefill-cuda-graph'}),
     IMMEDIATE_GRAPH_WIRE: frozenset({'--disable-decode-cuda-graph', '--disable-prefill-cuda-graph'}),
+    BF16_WORKBUDDY_64K: frozenset({'--disable-decode-cuda-graph', '--disable-prefill-cuda-graph'}),
 }
 
 
 def launch_args(spec, deployment=None):
     from .v3_level3_startup import apply
     _need(spec.launch_profile in GRAPH_PROFILES, 'unregistered launch profile')
+    if spec.launch_profile == BF16_WORKBUDDY_64K:
+        _need(getattr(spec, 'model_format', 'gguf') == 'bf16_safetensors',
+              'bf16_workbuddy_64k launch profile requires bf16_safetensors model format')
+        return apply(LAUNCH_BF16_WORKBUDDY_64K, getattr(deployment, 'runtime_config', b''))
     allowed_graphs = GRAPH_PROFILES[spec.launch_profile]
-    args = tuple(arg for arg in LAUNCH if arg not in allowed_graphs)
+    base = LAUNCH_BF16 if getattr(spec, 'model_format', 'gguf') == 'bf16_safetensors' else LAUNCH
+    args = tuple(arg for arg in base if arg not in allowed_graphs)
     if spec.launch_profile == IMMEDIATE_GRAPH_WIRE:
         # The pinned E0 cumulative path can hand the serializer a borrowed
         # output_ids list which grows after completion_tokens was captured.
@@ -376,8 +414,9 @@ def validate_container(raw, deployment, spec, name):
     """Inspect from the trusted Docker daemon before candidate code can run."""
     host, conf = raw['HostConfig'],raw['Config']
     mounts = {m['Destination']:(m['Source'],m['RW'],m['Type']) for m in raw['Mounts']}
-    pins = {TARGET:(str(deployment.tree),False,'bind'), '/model':(str(spec.model_dir),False,'bind'),
-            f'/model/{WEIGHT}':(str(spec.gguf),False,'bind')}
+    pins = {TARGET:(str(deployment.tree),False,'bind'), '/model':(str(spec.model_dir),False,'bind')}
+    if getattr(spec, 'model_format', 'gguf') != 'bf16_safetensors':
+        pins[f'/model/{WEIGHT}'] = (str(spec.gguf),False,'bind')
     env = dict(line.split('=',1) for line in conf['Env'] if '=' in line)
     request, = host['DeviceRequests']
     _need(raw['Name'] == '/'+name and raw['Image'] == spec.image_id and not raw['State']['Running']
@@ -418,7 +457,7 @@ class DockerService:
         if self.diagnostics is None or budget <= 0:
             return
         try:
-            captured = self._call(('logs','--tail','160',name),budget)
+            captured = self._call(('logs','--tail','1200',name),budget)
             with (self.diagnostics/(name+'.log')).open('xb') as out:
                 # Container uses a size-limited local log driver. Never share
                 # untrusted service log bytes with the Agent or verdict parser.
@@ -451,11 +490,13 @@ class DockerService:
         cleanup_needed = False
         try:
             cleanup_needed = True
+            model_mounts = ['--mount', f'type=bind,src={spec.model_dir},dst=/model,readonly']
+            if getattr(spec, 'model_format', 'gguf') != 'bf16_safetensors':
+                model_mounts += ['--mount', f'type=bind,src={spec.gguf},dst=/model/{WEIGHT},readonly']
             raw_id = run('create',*args,'--pull=never','--ipc','private','--no-healthcheck','--restart','no',
                          '--log-driver','local','--log-opt','max-size=8m',
                          '--log-opt','max-file=2','--entrypoint','python',
-                         '--mount',f'type=bind,src={spec.model_dir},dst=/model,readonly',
-                         '--mount',f'type=bind,src={spec.gguf},dst=/model/{WEIGHT},readonly',spec.image,*launch_args(spec,deployment))
+                         *model_mounts,spec.image,*launch_args(spec,deployment))
             output = json.loads(run('inspect',name))
             _need(type(output) is list and len(output)==1,'ambiguous candidate container')
             inspected = output[0]

@@ -69,7 +69,7 @@ def need(ok, why):
         raise ValueError(why)
 
 
-def trace_args(profile, mode):
+def trace_args(profile, mode, *, model_format='gguf'):
     if mode == 'native_positive':
         need(profile in GRAPH_PROFILES, 'Native fixture requires a registered runtime profile')
         # The separately profiled control reuses the verified build. Eager CUDA
@@ -78,13 +78,14 @@ def trace_args(profile, mode):
         # host removes the disposable container after exporting the trace.
         options = tuple('--kill=none' if arg == '--kill=sigterm' else arg
                         for arg in SOFTWARE_TRACE_OPTIONS)
-        return (*options, '--', 'python', *LAUNCH)
+        base_launch = launch_args(SimpleNamespace(launch_profile='diagnostic_eager', model_format=model_format))
+        return (*options, '--', 'python', *base_launch)
     if mode == 'e0':
         need(profile == 'diagnostic_eager', 'E0 kernel control requires the eager runtime profile')
         return TRACE_ARGS
     need(bool(GRAPH_PROFILES.get(profile)),
          'Graph trace requires a registered Graph profile')
-    launch = launch_args(SimpleNamespace(launch_profile=profile))
+    launch = launch_args(SimpleNamespace(launch_profile=profile, model_format=model_format))
     # Collect device execution for each whole host-launched graph. The GB10
     # hardware-only trace captured host submissions but lacked the device rows.
     return (*SOFTWARE_TRACE_OPTIONS, '--cuda-graph-trace=graph:host-only', '--', 'python', *launch)
@@ -104,7 +105,8 @@ class ProfileService(DockerService):
     def __init__(self, spec, *, mode, docker, diagnostics):
         super().__init__(spec, docker=docker, diagnostics=diagnostics)
         self.mode=mode
-        self.command = ('-c', KEEP_REPORT, 'ee-fixed-profile', NSYS, *trace_args(spec.launch_profile, mode))
+        self.command = ('-c', KEEP_REPORT, 'ee-fixed-profile', NSYS,
+                        *trace_args(spec.launch_profile, mode, model_format=getattr(spec, 'model_format', 'gguf')))
 
     def call_checked(self, deadline, *argv, max_seconds=25):
         timeout = min(max_seconds,deadline-monotonic())
@@ -131,10 +133,12 @@ class ProfileService(DockerService):
         need(missing.returncode==1 and b'no such' in missing.stderr.lower(), 'profile container name is not fresh')
         args = runtime_container_args(deployment,image=spec.image,name=name,gpu_uuid=spec.gpu_uuid)
         try:
+            model_mounts = ['--mount', f'type=bind,src={spec.model_dir},dst=/model,readonly']
+            if getattr(spec, 'model_format', 'gguf') != 'bf16_safetensors':
+                model_mounts += ['--mount', f'type=bind,src={spec.gguf},dst=/model/{WEIGHT},readonly']
             raw = run('create',*args,'--pull=never','--ipc','private','--no-healthcheck','--restart','no',
                       '--log-driver','local','--log-opt','max-size=8m','--log-opt','max-file=2','--entrypoint',ENTRY,
-                      '--mount',f'type=bind,src={spec.model_dir},dst=/model,readonly',
-                      '--mount',f'type=bind,src={spec.gguf},dst=/model/{WEIGHT},readonly',spec.image,*command)
+                      *model_mounts,spec.image,*command)
             inspected, = json.loads(run('inspect',name))
             cid = validate_profile_container(inspected,deployment,spec,name,command)
             need(type(cid) is str and len(cid)==64 and all(c in '0123456789abcdef' for c in cid)
@@ -373,7 +377,7 @@ def execute(root, settings, registration_pin, plan):
         prompts, hashes = timing.schedule.get(0)
         files['inputs.json'] = canonical(prompts)+b'\n'
         policy = replace(policy,measure_input_hashes=hashes,measure_pair=0)
-        script = 'observe_text_timing.py'
+        script = 'observe_workbuddy_timing.py' if 'observe_workbuddy_timing.py' in timing.files else 'observe_text_timing.py'
     need(not graph or timing.schedule is not None, 'Graph trace requires registered real-text traffic')
     stage_inputs(mounted,files)
     start = monotonic()

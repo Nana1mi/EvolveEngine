@@ -94,14 +94,17 @@ class TimingCollector:
         need((input_plan is None) == (documents is None), 'timing input plan needs its verified corpus')
         files = {'observe_timing.py','timing.py'}
         if input_plan is not None:
-            files.add('observe_text_timing.py')
+            obs_name = 'observe_workbuddy_timing.py' if (policy.workbuddy_sla and 'observe_workbuddy_timing.py' in observer_hashes) else 'observe_text_timing.py'
+            files.add(obs_name)
         self.files = pinned_files(observer_files,observer_hashes,files)
         plan = dict(scenes=policy.scenes,warm_waves=policy.warm_waves,timed_waves=policy.timed_waves,
-                    observer_sha256=observer_hashes,score_rule=DEV_SCORE_RULE)
+                    observer_sha256=observer_hashes,score_rule=policy.score_rule or DEV_SCORE_RULE)
+        if policy.workbuddy_sla:
+            plan['workbuddy_sla'] = True
         if input_plan is not None:
             plan['input_plan'] = input_plan
             self.schedule = TimingSchedule(documents, policy.scenes, policy.warm_waves + policy.timed_waves,
-                                           input_plan['seed'])
+                                           input_plan['seed'], allow_wrap=policy.workbuddy_sla)
         self.workload = canonical(plan)+b'\n'
         need(digest(self.workload)==policy.measure_workload_sha256, 'timing workload not frozen in hardware policy')
         self.observer = DockerObserver(host,service_spec)
@@ -122,20 +125,23 @@ class TimingCollector:
             hashes = self.policy.weights
             waves = load_chat(chat, hashes['tokenizer.json'], hashes['chat_template.jinja'],
                               self.policy.scenes, self.policy.warm_waves, self.policy.timed_waves,
-                              split=split, engine=self.policy.engine)
+                              split=split, engine=self.policy.engine, workbuddy=self.policy.workbuddy_sla)
             self.chat_schedule = ChatSchedule(waves, self.policy.warm_waves,
                                               self.policy.timed_waves, self.schedule.seed)
             self.chat_schedule.maximum = self.schedule.maximum
-            w3_timed = len(waves['W3']) - 2*self.policy.warm_waves
             plan['input_plan'] = dict(distribution=CHAT_SCHEMA, corpus_sha256=chat['sha256'],
                                       enable_thinking=True, split=split)
             if split=='generalization':
                 from .v3_level3_chat_timing import bounds, GENERALIZATION
                 plan['length_strata']=GENERALIZATION
-                plan['lane_ranges']={s:[(bounds(s,n,split,0)[0], bounds(s,n,split,1)[1]) for n,_ in shape] for s,shape in self.policy.scenes.items()}
-            plan['w3_input_range'] = W3_INPUT_RANGE
-            plan['w3_visible_answer'] = 'spark_after_reasoning_end'
-            plan['w3_timed_waves'] = w3_timed
+                plan['lane_ranges']={s:[(bounds(s,n,split,0,workbuddy=self.policy.workbuddy_sla)[0],
+                                         bounds(s,n,split,1,workbuddy=self.policy.workbuddy_sla)[1])
+                                        for n,_ in shape] for s,shape in self.policy.scenes.items()}
+            if not self.policy.workbuddy_sla:
+                w3_timed = len(waves['W3']) - 2*self.policy.warm_waves
+                plan['w3_input_range'] = W3_INPUT_RANGE
+                plan['w3_visible_answer'] = 'spark_after_reasoning_end'
+                plan['w3_timed_waves'] = w3_timed
         self.workload = canonical(plan) + b'\n'
         self.policy = replace(self.fixed_policy, natural_eos=True, measure_workload_sha256=digest(self.workload),
                               chat_corpus_sha256=chat['sha256'] if chat else None,w3_timed_waves=w3_timed,
@@ -170,7 +176,8 @@ class TimingCollector:
                 policy=replace(policy,measure_input_lengths=length_map(inputs))
             staged['inputs.json'] = canonical(inputs) + b'\n'
             policy = replace(policy, measure_input_hashes=hashes, measure_pair=pair_index)
-            script, extra = 'observe_text_timing.py', dict(pair_index=pair_index)
+            script = 'observe_workbuddy_timing.py' if 'observe_workbuddy_timing.py' in self.files else 'observe_text_timing.py'
+            extra = dict(pair_index=pair_index)
             if policy.natural_eos:
                 extra['timing_mode'] = 'natural_eos'
                 if policy.chat_corpus_sha256:
@@ -207,7 +214,7 @@ class DockerObserver:
     def __call__(self, service, inputs, outputs, deadline, *, script, model=False, output_cap=512*1024,
                  on_first_line=None):
         need(',' not in str(inputs),'unsafe observer staging path')
-        need(script in ('observe_timing.py','observe_text_timing.py','observe_quality.py','observe_trajectory.py'),'not a registered trusted observer')
+        need(script in ('observe_timing.py','observe_text_timing.py','observe_workbuddy_timing.py','observe_quality.py','observe_trajectory.py'),'not a registered trusted observer')
         need(re.fullmatch('[0-9a-f]{64}',service.container_id),'invalid observer peer')
         namespace = 'container:'+service.container_id
         name = 'ee-l3-observer-'+token_hex(10)

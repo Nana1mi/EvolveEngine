@@ -65,7 +65,7 @@ def compare_dev(reference, candidate, *, replay_floors=None):
         ratios[scene] = y / x
         need(isfinite(ratios[scene]) and ratios[scene] > 0, 'invalid scene ratio')
     w3 = None
-    if reference.data.get('chat_corpus_sha256'):
+    if reference.data.get('chat_corpus_sha256') and 'w3_requests' in reference.data:
         ratios['W3'],w3 = business.paired_w3_ttft(reference.data['w3_requests'],candidate.data['w3_requests'])
     result = dict(reference=reference.evidence, receipt=candidate.evidence, scene_ratios=ratios,
                   equal_scene_geomean=exp(sum(log(v) for v in ratios.values()) / len(SCENES)),
@@ -109,7 +109,7 @@ class Run:
         self.score_policy = business.resolve_policy(scoring) if scoring else None
         need(self.score_policy is None or paired_timing, 'unsupported scoring or unpaired timing')
         self.scoring = self.score_policy['version'] if self.score_policy else None
-        need(weight_audit is None or weight_audit == weights.POLICY and scoring, 'invalid engineering weight audit')
+        need(weight_audit is None or weight_audit in weights.POLICIES and scoring, 'invalid engineering weight audit')
         self.weight_audit = weight_audit
         self.audit_source_cache = {}
         self.sample_screens = {}
@@ -361,7 +361,14 @@ class Run:
                 self._event('development_timed_output_mismatch', engine=engine.digest,
                             reference=base.evidence, candidate=trial.evidence)
                 return dict(status='timed_output_mismatch', evidence=trial.evidence, reference=base.evidence)
-            comparison.update(scoring_version=self.scoring, weighted_score=business.weighted_score(comparison['scene_ratios']))
+            comparison.update(
+                scoring_version=self.scoring,
+                weighted_score=business.weighted_score(comparison['scene_ratios'], self.score_policy['weight_percent']),
+            )
+            if self.scoring == business.WORKBUDDY_VERSION:
+                sla = business.workbuddy_sla_summary(trial.data.get('scenes') or {})
+                if sla:
+                    comparison['workbuddy_sla'] = sla
             if self.weight_audit:
                 comparison['gain_status'] = weights.PROVISIONAL
             candidate['performance'] = comparison
@@ -473,7 +480,8 @@ class Run:
         jobs = [row for row in self.jobs if row.get('build') == chosen.build and row['engine'] == chosen.engine and row.get('performance')]
         key = weights.packet(self.journal.path.parent/'weight-audit', self.contract, self.engines[chosen.engine],
                              asdict(chosen), asdict(self.receipts[chosen.build]), asdict(self.receipts[chosen.quality]),
-                             asdict(self.receipts[base.quality]), jobs, trigger=trigger, context=context, source_cache=self.audit_source_cache)
+                             asdict(self.receipts[base.quality]), jobs, trigger=trigger, context=context,
+                             source_cache=self.audit_source_cache, policy=self.weight_audit)
         self._event('weight_audit_requested', trigger=trigger, packet=key, chosen=asdict(chosen), **context)
         return key
 
@@ -743,6 +751,26 @@ class Run:
             return 200, dict(active=self.lineage.active().identity, versions=self.lineage.catalogue())
         if op == 'facts':
             need(not args, 'facts takes no arguments')
+            if isinstance(self.research, WebResearch):
+                research_guide = dict(
+                    scope=WEB_SCOPE, live_web=True, cached_available=self.research.cache is not None,
+                    operations={
+                        'research_search': '{query, count? (1..50), cached?}',
+                        'research_fetch': '{url} (fetches public HTTP/HTTPS URL and returns page 1 directly)',
+                        'research_read': '{identity, offset} (only call when next_offset is non-null)',
+                        'research_reuse': '{kind: original|technology_transfer|upstream_patch, paths, url?, revision?, license?, identity?}',
+                    },
+                )
+            elif self.research is not None:
+                research_guide = dict(
+                    scope='reviewed_public_cache', live_web=False, cached_available=True,
+                    operations={
+                        'research_search': '{query, limit?, offset?}',
+                        'research_read': '{identity, offset?}',
+                    },
+                )
+            else:
+                research_guide = None
             return 200, dict(**(dict(business_policy=self.score_policy, best_eligible=self.business_best(),
                                     historical_best=self.historical_best(), latest_checkpoint=self.latest_checkpoint,
                                     latest_proposal=self.stage_proposals[-1] if self.stage_proposals else None,
@@ -752,7 +780,8 @@ class Run:
                              remaining_node_ms=self.left, available_worker_operations=sorted(self.reservations),
                              development_reference=self.reference.evidence if self.reference else None,
                              research_scope=WEB_SCOPE if isinstance(self.research, WebResearch) else
-                             'reviewed_public_cache' if self.research else None)
+                             'reviewed_public_cache' if self.research else None,
+                             research_guide=research_guide)
         if op in {'research_search','research_fetch','research_read','research_reuse'} and isinstance(self.research, WebResearch):
             call = {'research_search': self.research.search, 'research_fetch': self.research.fetch,
                     'research_read': self.research.read, 'research_reuse': self.research.record_reuse}[op]
