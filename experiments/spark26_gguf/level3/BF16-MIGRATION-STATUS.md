@@ -97,12 +97,12 @@ Both approval plans passed `launch_live.py` audit-only verification (`{"admitted
   - Frozen workload (`W1–W5 + G64K`): `workbuddy-v2-requests.json` = `d67828213e4032c3507bec6141716f5d1b9aeb7215306119e0ced0d202baef76`
   - 6-pair E0/E0 noise calibration (`stable=True`, scene log-envelopes `W1=0.0100, W2=0.0100, W3=0.0100, W4_cold=0.0100, W4_hot=0.0127, W5=0.0100`, guardrail log-envelopes `w4_cold_e2e=0.0100, g64k_ttft=0.0100, g64k_decode=0.0158, p95_itl=0.0209`, calibrated precision targets all `1.015`): `noise/result.json` = `d01287f589737b99f909e3a98cd75acd37e989437124993144929edb959ad306`
   - Graph E0 replay (Decode + Prefill CUDA Graphs witnessed): `graph/replayed.json` = `2d13f0eabdabdd07ee61fa334067bdcd2e94ce161c78352a649be30a963be004`
-  - 13-step BF16 Worker qualification (`fault` caught `violation`, `lowprec` flagged FP8 copy, `longctx_pos` passed 6/6, `longctx_fault` caught exclusively by `long_context_logprob_16k_64k`, `positive-measure` verified): `qualification/acceptance.json` = `d8432f7d37de7571ac921abe7de6b5ffdbf43265b041dcc58d700b72ab79b353`
+  - 13-step BF16 Worker qualification (`fault` caught `violation`, `lowprec` flagged FP8 copy, `longctx_pos` passed 6/6, `longctx_fault` caught exclusively by `long_context_logprob_16k_64k`, `positive-measure` verified with real public-receipt `guardrails.G64K` + `compare_dev` check): `qualification/acceptance.json` = `7330590055de52a3d8443144e8ae24fc00274beb3a7f0d7e381cb2e91c9af7e8`
   - Audit-only check passed (`{"admitted":true,"paid_calls":0,"worker_started":false}`):
   ```powershell
   python experiments/spark26_gguf/level3/launch_live.py `
     --approval "C:\Users\rog\AppData\Local\EvolveEngine\l3-bf16-wbv2-20261127\approval-bf16-workbuddy-v2.json" `
-    --approval-sha256 fc04077798abe544abb34b2a73aa2d8fadb0498adca1486f6383c6f573d93162 `
+    --approval-sha256 932e10e63cbec580f21479c906fed6efd5de8612aef1f5b4443871e7a6d2d2c6 `
     --config experiments/spark26_gguf/level3/objective-exploration-bf16-workbuddy-v2.json `
     --execute <NEW_RUN_DIR> `
     --archive <path\to\sglang.tar.gz> `

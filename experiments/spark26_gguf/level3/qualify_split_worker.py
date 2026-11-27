@@ -170,6 +170,14 @@ def check_bf16(name, status, data, verified, registered, split_pin, cal, *, has_
         return
     if name.endswith('-measure'):
         n.need(data['output_authentication']['status'] == 'verified', 'BF16 positive measure lacked output auth')
+        from types import SimpleNamespace
+        from evolveengine.v3_level3_run import compare_dev
+        from evolveengine.v3_level3_scoring import WORKBUDDY_V2_REPLAY_SCENES
+        if set(data.get('scenes') or {}) == set(WORKBUDDY_V2_REPLAY_SCENES):
+            stub = SimpleNamespace(operation='develop_measure', status='observed', evidence='0' * 64, data=data)
+            comp = compare_dev(stub, stub)
+            n.need(set(comp.get('guardrail_ratios') or {}) == {'w4_cold_e2e', 'g64k_ttft', 'g64k_decode', 'p95_itl'},
+                   'BF16 WorkBuddy v2 public measure receipt missing verified guardrails')
         return
     row = data['trajectory_screen']
     expected_cases = set((*QUALITY_CASES[:2], *SPLIT_CASES, *((LONG_CTX_CASE,) if has_long_ctx else ())))

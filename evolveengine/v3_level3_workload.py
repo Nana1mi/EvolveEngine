@@ -55,14 +55,17 @@ def _wrapped_stream(documents, min_len):
     return stream
 
 
-def select_inputs(documents, scenes, waves, *, seed, pair, previously_used=frozenset(), allow_wrap=False):
+def select_inputs(documents, scenes, waves, *, seed, pair, previously_used=frozenset(), allow_wrap=False,
+                  scene_waves=None):
     """Use the same pair index on both arms. A fresh service gets only its own inputs."""
     _require(_sha(seed) and type(pair) is int and 0 <= pair < (1 << 31), 'invalid timing seed or pair index')
     rng = Random(int.from_bytes(sha256(canonical([DISTRIBUTION, seed, pair])).digest(), 'big'))
-    slots = [(n, scene, wave, lane) for scene, spec in scenes.items() for wave in range(waves)
+    def wave_count(scene):
+        return (scene_waves or {}).get(scene, waves)
+    slots = [(n, scene, wave, lane) for scene, spec in scenes.items() for wave in range(wave_count(scene))
              for lane, (n, _) in enumerate(spec)]
     pool = [(i, 0, len(ids)) for i, ids in enumerate(documents)]
-    items = {scene: [[None for _ in spec] for _ in range(waves)] for scene, spec in scenes.items()}
+    items = {scene: [[None for _ in spec] for _ in range(wave_count(scene))] for scene, spec in scenes.items()}
     hashes = set()
     wrapped = None
     for n, scene, wave, lane in sorted(slots, key=lambda slot: (-slot[0], *slot[1:])):
@@ -123,9 +126,9 @@ def profile_inputs(documents, scenes, count, seed, chat=None):
 
 class TimingSchedule:
     """Deterministic pair plans without reusing exact prompts across pair indices."""
-    def __init__(self, documents, scenes, waves, seed, *, maximum=MAX_PAIRS, allow_wrap=False):
+    def __init__(self, documents, scenes, waves, seed, *, maximum=MAX_PAIRS, allow_wrap=False, scene_waves=None):
         self.documents, self.scenes, self.waves, self.seed = documents, scenes, waves, seed
-        self.maximum, self.allow_wrap = maximum, allow_wrap
+        self.maximum, self.allow_wrap, self.scene_waves = maximum, allow_wrap, scene_waves
         self.index, self.current, self.used = -1, None, set()
 
     def get(self, pair):
@@ -135,7 +138,8 @@ class TimingSchedule:
         while self.index < pair:
             index = self.index + 1
             inputs = select_inputs(self.documents, self.scenes, self.waves, seed=self.seed, pair=index,
-                                   previously_used=self.used, allow_wrap=self.allow_wrap)
+                                   previously_used=self.used, allow_wrap=self.allow_wrap,
+                                   scene_waves=self.scene_waves)
             hashes = input_fingerprints(inputs)
             self.used.update(pin for waves in hashes.values() for wave in waves for pin in wave)
             self.index, self.current = index, (inputs, hashes)

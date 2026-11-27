@@ -37,6 +37,7 @@ BF16_OVERLAY_CHANGES = frozenset({
     'evolveengine/v3_level3_long_ctx.py',
     'evolveengine/v3_level3_evidence.py',
     'evolveengine/v3_level3_chat_timing.py',
+    'evolveengine/v3_level3_worker.py',
     'experiments/spark26_gguf/level3/repeat_e0.py',
 })
 TEACHER_SOURCE={

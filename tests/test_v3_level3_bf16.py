@@ -588,6 +588,199 @@ class Bf16MigrationTests(unittest.TestCase):
             self.assertTrue(res['cases']['ctx16k']['passed'])
             self.assertFalse(res['cases']['ctx64k']['passed'])
 
+    def test_p0_worker_public_receipt_preserves_guardrails_and_compare_dev(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from evolveengine import v3_level3_scoring as scoring
+        from evolveengine.v3_level3_worker import NativeWorker
+
+        pol = scoring.natural_policy(
+            '1' * 64, '2' * 64,
+            {'W1': 0.01, 'W2': 0.01, 'W3': 0.01, 'W4_hot': 0.0127, 'W4_cold': 0.01, 'W5': 0.01},
+            chat_corpus='3' * 64, version=scoring.WORKBUDDY_V2_VERSION,
+            scene_precision_targets={'W3': 1.015, 'W4_hot': 1.015, 'W4_cold': 1.015, 'W5': 1.015},
+            guardrail_envelope={'w4_cold_e2e': 0.01, 'g64k_ttft': 0.01, 'g64k_decode': 0.0158, 'p95_itl': 0.0209},
+        )
+        fake_validated = {
+            'status': 'valid',
+            'scenes': {
+                'W1': {'dev_score': 55.0, 'tpot_ms': 18.0, 'ttft_ms': 120.0, 'output_toks_per_s': 55.0,
+                       'share_ge_40_tps': 1.0, 'share_ge_50_tps': 1.0, 'p95_itl_ms': 19.0, 'unfinished_count': 0},
+                'W2': {'dev_score': 0.65, 'tpot_ms': 19.0, 'ttft_ms': 1538.0, 'output_toks_per_s': 48.0,
+                       'share_ge_40_tps': 1.0, 'share_ge_50_tps': 0.0, 'p95_itl_ms': 20.0, 'unfinished_count': 0},
+                'W3': {'dev_score': 35.0, 'tpot_ms': 28.0, 'ttft_ms': 300.0, 'output_toks_per_s': 280.0,
+                       'share_ge_40_tps': 0.25, 'share_ge_50_tps': 0.0, 'p95_itl_ms': 24.0, 'unfinished_count': 0},
+                'W4': {'dev_score': 33.0, 'tpot_ms': 29.0, 'ttft_ms': 400.0, 'output_toks_per_s': 240.0,
+                       'share_ge_40_tps': 0.0, 'share_ge_50_tps': 0.0, 'p95_itl_ms': 26.0, 'unfinished_count': 0,
+                       'w4_hot_decode_tps': 33.0, 'w4_cold_ttft_ms': 3200.0, 'w4_cold_e2e_ms': 8200.0},
+                'W5': {'dev_score': 31.0, 'tpot_ms': 32.0, 'ttft_ms': 3800.0, 'output_toks_per_s': 344.0,
+                       'share_ge_40_tps': 0.0, 'share_ge_50_tps': 0.0, 'p95_itl_ms': 35.0, 'unfinished_count': 0},
+            },
+            'guardrails': {'G64K': {'ttft_ms': 10200.0, 'decode_tokens_per_s': 38.0, 'unfinished_count': 0}},
+            'memory': {'peak_device_bytes': 123456},
+            'measurement_pair': 0,
+            'measurement_inputs_sha256': 'a' * 64,
+            '_private_replay': {'should_not_leak': True},
+        }
+        from evolveengine.v3_level3_collect import Observation
+        from evolveengine.v3_level3_evidence import EvidencePolicy
+
+        w = NativeWorker.__new__(NativeWorker)
+        w.variant = 'sm100'
+        w.service = SimpleNamespace(spec=SimpleNamespace(gpu_uuid='u'))
+        pol_ev = EvidencePolicy(
+            engine='b' * 64, worker_id='w', boot_id='b', device_uuid='u',
+            weights={'tokenizer.json': '1' * 64}, loaded_artifacts={'a': '2' * 64},
+            quality_rule_sha256='3' * 64, quality_cases=('numeric_32',),
+            measure_workload_sha256='4' * 64, profile_workload_sha256='5' * 64,
+            scenes={'W1': ((64, 8),)}, warm_waves=1, timed_waves=2,
+            memory_stages=('ready', 'post_requests'), memory_limit_bytes=None,
+            profile_target=('nsys',), natural_eos=False, origin='hardware_collection',
+        )
+        dep = SimpleNamespace(candidate='b' * 64, native_mapping=lambda v: (None, {'a': '2' * 64}))
+        fake_check = SimpleNamespace(data={'operations': {'develop_measure': SimpleNamespace(status='observed', data=fake_validated)}})
+        with tempfile.TemporaryDirectory() as td, \
+             patch('evolveengine.v3_level3_worker.validate_evidence', return_value=fake_check):
+            obs = Observation(pol_ev, 'f' * 64)
+            status, public = w._validate('develop_measure', Path(td) / 'measure', obs, {'tokenizer.json': '1' * 64}, dep, check_replay=False)
+        self.assertEqual(status, 'observed')
+        self.assertIn('guardrails', public)
+        self.assertEqual(public['guardrails']['G64K']['ttft_ms'], 10200.0)
+        self.assertNotIn('_private_replay', public)
+
+        from evolveengine.v3_level3_run import compare_dev
+        stub = SimpleNamespace(operation='develop_measure', status='observed', evidence='e' * 64, data=public)
+        startup_cmp = compare_dev(stub, stub)
+        self.assertEqual(set(startup_cmp['guardrail_ratios']), {'w4_cold_e2e', 'g64k_ttft', 'g64k_decode', 'p95_itl'})
+        self.assertAlmostEqual(scoring.weighted_score(startup_cmp['scene_ratios'], pol['weight_percent']), 1.0, places=6)
+
+        # Fail-closed: stripping guardrails must still raise ValueError
+        broken = SimpleNamespace(operation='develop_measure', status='observed', evidence='e' * 64,
+                                 data={k: v for k, v in public.items() if k != 'guardrails'})
+        with self.assertRaisesRegex(ValueError, 'invalid workbuddy v2 guardrail metrics'):
+            compare_dev(broken, broken)
+
+        # Verify qualify_split_worker.check_bf16 executes compare_dev on the real public receipt
+        from experiments.spark26_gguf.level3.qualify_split_worker import check_bf16
+        pub_with_auth = dict(public, output_authentication={'status': 'verified'})
+        check_bf16('positive-measure', 'observed', pub_with_auth, True, {}, '0' * 64, '0' * 64)
+        with self.assertRaisesRegex(ValueError, 'invalid workbuddy v2 guardrail metrics'):
+            check_bf16('positive-measure', 'observed',
+                       {k: v for k, v in pub_with_auth.items() if k != 'guardrails'}, True, {}, '0' * 64, '0' * 64)
+
+    def test_p1_develop_stress_wave_count_matches_collector_and_measure(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from evolveengine.v3_harness import canonical, digest
+        from evolveengine.v3_level3_collect import TimingCollector
+        from evolveengine.v3_level3_evidence import (
+            EvidencePolicy, SCHEMA, WORKBUDDY_V2_SCORE_RULE, _measure,
+        )
+        from experiments.spark26_gguf.level3.node_preflight import (
+            WORKBUDDY_V2_SCENES, WORKBUDDY_V2_SCENE_TIMED, WORKBUDDY_V2_SCENE_WARM,
+        )
+
+        # Use scaled-down token lengths with exact WORKBUDDY_V2_SCENES keys/lanes & wave config
+        small_scenes = {s: tuple((64, 8) for _ in shape) for s, shape in WORKBUDDY_V2_SCENES.items()}
+        docs = [list(range(100 + i * 500, 100 + (i + 1) * 500)) for i in range(4)]
+        obs_files = {
+            'observe_timing.py': b'# timing\n',
+            'timing.py': b'# lib\n',
+            'observe_workbuddy_timing.py': b'# wb\n',
+        }
+        obs_hashes = {k: digest(v) for k, v in obs_files.items()}
+        input_plan = {'distribution': 'fixed-v1', 'seed': 'a' * 64}
+        plan = dict(
+            scenes=small_scenes, warm_waves=1, timed_waves=2,
+            observer_sha256=obs_hashes, score_rule=WORKBUDDY_V2_SCORE_RULE,
+            workbuddy_sla=True, workbuddy_v2=True,
+            scene_warm_waves=dict(WORKBUDDY_V2_SCENE_WARM),
+            scene_timed_waves=dict(WORKBUDDY_V2_SCENE_TIMED),
+            input_plan=input_plan,
+        )
+        wsha = digest(canonical(plan) + b'\n')
+        policy = EvidencePolicy(
+            engine='e' * 64, worker_id='w', boot_id='b', device_uuid='u',
+            weights={'tokenizer.json': '1' * 64}, loaded_artifacts={'a': '2' * 64},
+            quality_rule_sha256='3' * 64, quality_cases=('numeric_32',),
+            measure_workload_sha256=wsha, profile_workload_sha256='5' * 64,
+            scenes=small_scenes, warm_waves=1, timed_waves=2,
+            memory_stages=('ready', 'post_requests'), memory_limit_bytes=None,
+            profile_target=('nsys',), natural_eos=False, score_rule=WORKBUDDY_V2_SCORE_RULE,
+            workbuddy_sla=True, workbuddy_v2=True,
+            scene_warm_waves=dict(WORKBUDDY_V2_SCENE_WARM),
+            scene_timed_waves=dict(WORKBUDDY_V2_SCENE_TIMED),
+        )
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            obs_dir = td_path / 'obs'
+            obs_dir.mkdir()
+            obs_paths = {}
+            for name, raw in obs_files.items():
+                p = obs_dir / name
+                p.write_bytes(raw)
+                obs_paths[name] = p
+            collector = TimingCollector(
+                None, None, policy, obs_paths, obs_hashes,
+                documents=docs, input_plan=input_plan,
+            )
+            inputs, _ = collector.schedule.get(0)
+            wave_counts = {s: len(w) for s, w in inputs.items()}
+            self.assertEqual(wave_counts, {'W1': 3, 'W2': 3, 'W3': 6, 'W4': 5, 'W5': 3, 'G64K': 1})
+            self.assertEqual(sum(wave_counts.values()), 21)
+
+            def fake_observer(service, observer_input, operation, deadline, *, script, **kwargs):
+                staged_inputs = json.loads((observer_input / 'inputs.json').read_bytes())
+                (operation / 'observer.stdout').write_bytes(b'')
+                (operation / 'observer.stderr').write_bytes(b'')
+                (operation / 'observer.inspect.json').write_bytes(b'{}\n')
+                t = 10_000_000
+                lines = []
+                for scene, waves in staged_inputs.items():
+                    warm_n = WORKBUDDY_V2_SCENE_WARM.get(scene, 1)
+                    for widx, wave in enumerate(waves):
+                        reqs = []
+                        for lane, ids in enumerate(wave):
+                            out = small_scenes[scene][lane][1]
+                            start = t
+                            first = start + 50_000_000
+                            second = first + 25_000_000
+                            last = first + (out - 1) * 25_000_000
+                            done = last + 1_000_000
+                            reqs.append(dict(
+                                rid=f'{scene}-{widx}-{lane}', input=len(ids), output=out,
+                                sha256='c' * 64, input_sha256=digest(canonical(ids)),
+                                start_ns=start, first_ns=first, second_ns=second, last_ns=last, done_ns=done,
+                                first_token_unambiguous=True, stream_complete=True,
+                                reported_speculation=None, cached_tokens=0, p95_itl_ms=25.0,
+                            ))
+                        t += 5_000_000_000
+                        lines.append(json.dumps(dict(scene=scene, index=widx, timed=widx >= warm_n, requests=reqs)))
+                return '\n'.join(lines)
+
+            def fake_identity(host, service, service_spec, operation, op, pol_in, deadline, variant):
+                for fn in ('external-identity.json', 'host-mappings.json', 'service.inspect.json'):
+                    (operation / fn).write_bytes(b'{}\n')
+                binding = dict(
+                    schema=SCHEMA, operation=op, engine='e' * 64, worker_id='w', boot_id='b',
+                    device_uuid='u', origin='offline_fixture', run_id='r', service_id='s',
+                    start_ns=1_000_000, end_ns=999_000_000_000,
+                )
+                return pol_in, binding
+
+            collector.observer = fake_observer
+            archive = td_path / 'stress-run'
+            with patch('evolveengine.v3_level3_collect.identity', side_effect=fake_identity):
+                obs = collector('develop_measure', object(), archive, deadline=10**18, pair_index=0, stress=True)
+            timing_path = archive / 'develop_measure' / 'timing.jsonl'
+            rows = [json.loads(line) for line in timing_path.read_bytes().splitlines()]
+            self.assertEqual(len(rows), 22)  # 1 binding header + 21 wave rows
+            receipt = json.loads((archive / 'develop_measure' / 'receipt.json').read_bytes())
+            measured = _measure(receipt, obs.policy, timing_path)
+            self.assertEqual(set(measured['scenes']), {'W1', 'W2', 'W3', 'W4', 'W5'})
+            self.assertIn('G64K', measured['guardrails'])
+            self.assertGreater(measured['guardrails']['G64K']['decode_tokens_per_s'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

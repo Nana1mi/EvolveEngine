@@ -87,7 +87,7 @@ class NativeWorker:
         if check.status == 'insufficient_evidence' and 'case_outcomes' not in check.data:
             return check.status, {}
         need(check.status in ('observed','valid','violation','insufficient_evidence'), 'invalid hardware observation verdict')
-        allowed = ('scenes','case_outcomes','observed_peak_sample_bytes','profiler_enabled','residency_limits',
+        allowed = ('scenes','guardrails','case_outcomes','observed_peak_sample_bytes','profiler_enabled','residency_limits',
                    'weight_observation','kernel_summary','trace_summary','counter_status','counters','measurement_pair',
                    'measurement_inputs_sha256','timed_outputs_sha256','timed_request_outputs',
                    'speculation','timing_mode','timing_workload_sha256','chat_corpus_sha256','replay_protocol','concurrent_requests','w3_requests')

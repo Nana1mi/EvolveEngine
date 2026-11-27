@@ -109,8 +109,13 @@ class TimingCollector:
             plan['scene_timed_waves'] = dict(policy.scene_timed_waves)
         if input_plan is not None:
             plan['input_plan'] = input_plan
+            scene_waves = ({s: (policy.scene_warm_waves or {}).get(s, policy.warm_waves) +
+                            (policy.scene_timed_waves or {}).get(s, policy.timed_waves)
+                            for s in policy.scenes}
+                           if (policy.scene_warm_waves or policy.scene_timed_waves) else None)
             self.schedule = TimingSchedule(documents, policy.scenes, policy.warm_waves + policy.timed_waves,
-                                           input_plan['seed'], allow_wrap=policy.workbuddy_sla)
+                                           input_plan['seed'], allow_wrap=policy.workbuddy_sla,
+                                           scene_waves=scene_waves)
         self.workload = canonical(plan)+b'\n'
         need(digest(self.workload)==policy.measure_workload_sha256, 'timing workload not frozen in hardware policy')
         self.observer = DockerObserver(host,service_spec)
