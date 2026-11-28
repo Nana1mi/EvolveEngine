@@ -32,10 +32,25 @@ loopback server avoid a second app scaffold, service database, or external CDN.
 4. Versions distinguish declared activation from evidenced actual load. Resources
    separate the conservative ledger, token totals, and estimated fees from provider bills.
 5. Replay through recorded performance points and expose evidence fingerprints; no
-   hidden Q/T, arbitrary files, raw context, candidate output, credentials, or Run controls.
+   hidden Q/T, arbitrary files, credentials, or Run controls.
 
-Deferred: per-tool span instrumentation where not already persisted, sanitized source
-and harness diffs via an explicit audited export path, independently attested promotion
-chains, multi-worker lanes beyond recorded attribution, comparison of multiple run
-series, production telemetry, and paper-grade uncertainty analysis/exports. An absent
+## Second vertical slice (2026-11-28: WorkBuddy v2 + Run-Scoped Full Trace & Diffs)
+
+1. **WorkBuddy v2 metrics & guardrails**: Dynamic scene projection (`W1–W5`, `W4_hot`,
+   `W4_cold`, `G64K`), 4 mandatory guardrails (`w4_cold_e2e`, `g64k_ttft`, `g64k_decode`,
+   `p95_itl`, `unfinished_count`), business SLA (`>=40` / `>=50 tok/s`, `cached_tokens_min`),
+   W5 three-metric side-by-side (first-token latency `ttft_ms`, P20 decode, wave throughput),
+   and 6-pair minimum before rendering 95% confidence intervals.
+2. **Separated internal trace boundary**: For explicitly registered, non-holdout engineering
+   runs viewed strictly over loopback/SSH tunnel, Controller captures redacted content-addressed
+   Pi tool/message streams and Broker replies into `launch_dir/trace/` (never mounted into the
+   Pi container). Observatory serves lean snapshots over SSE and exposes run-scoped, holdout-blocked
+   detail APIs (`/trace`, `/blobs/<sha>`, `/candidates/<engine>/detail`, `/waterfall`,
+   `/research`, `/harness`, `/context`) where every blob and diff lookup verifies membership in
+   the requested eligible run. Historical runs without `trace/` explicitly render as metadata-only.
+   Reasoning blocks default to collapsed in the UI for readability; note that full redacted text
+   is delivered to the authorized internal browser session.
+
+Deferred: independently attested promotion chains, multi-worker lanes beyond recorded attribution,
+comparison of multiple run series, production telemetry, and paper-grade exports. An absent
 record must remain absent; adding UI does not manufacture trace data or approvals.

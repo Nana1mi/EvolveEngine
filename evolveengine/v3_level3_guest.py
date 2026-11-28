@@ -121,8 +121,8 @@ def _wait_pi(proc, timeout, report, relay):
             continue
 
 
-def _run_pi(run, timeout, report, relay):
-    """Timestamp Pi tool boundaries as Docker emits them; discard all raw message contents."""
+def _run_pi(run, timeout, report, relay, *, trace_recorder=None, segment=0):
+    """Timestamp Pi tool boundaries as Docker emits them; optionally stream redacted trace asynchronously."""
     proc = subprocess.Popen(['docker', 'start', '-a', run], stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
     origin, utc_origin = monotonic(), time_ns()
@@ -155,6 +155,8 @@ def _run_pi(run, timeout, report, relay):
                         report['pi_tool_executions'].append(dict(name=name, error=row.get('isError')))
                 if event == 'message_end' and isinstance(row.get('message'),dict) and row['message'].get('stopReason') == 'error':
                     report['pi_errors'] += 1
+                if trace_recorder is not None:
+                    trace_recorder.record_pi_event(segment=segment, utc_ns=stamp, row=row)
 
     reader = Thread(target=consume, name='level3-pi-events', daemon=True)
     reader.start()
@@ -167,10 +169,13 @@ def _run_pi(run, timeout, report, relay):
             proc.wait(timeout=5)
         reader.join(timeout=5)
         report['pi_reader_settled'] = not reader.is_alive()
+        if trace_recorder is not None:
+            trace_recorder.flush(timeout=2.0)
 
 
 def sandbox(images, contract, engine, snapshot, runtime, profile, base_system, prompt, gateway, *,
-            seconds, tools=None, draft=None, on_interrupt=None, resources=None, dependencies=None):
+            seconds, tools=None, draft=None, on_interrupt=None, resources=None, dependencies=None,
+            trace_recorder=None, segment=0):
     """Materialize a verified complete tree; never mount its artifact store or the journal."""
     need(seconds is None or type(seconds) is int and seconds > 0, 'invalid session wall lease')
     need(runtime['runner_sha'] == _code() and runtime['base_config_sha'] == _config(profile, base_system, tools, resources),
@@ -243,7 +248,9 @@ def sandbox(images, contract, engine, snapshot, runtime, profile, base_system, p
             left = None if seconds is None else seconds - (monotonic() - start)
             need(left is None or left > 0, 'wall budget exhausted during guest staging')
             try:
-                proc = _run_pi(run, left, report, relay)
+                if trace_recorder is not None:
+                    trace_recorder.register_secret(gateway.token)
+                proc = _run_pi(run, left, report, relay, trace_recorder=trace_recorder, segment=segment)
             except subprocess.TimeoutExpired:
                 timed_out = True
         except KeyboardInterrupt as exc:

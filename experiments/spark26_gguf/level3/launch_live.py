@@ -31,6 +31,7 @@ from evolveengine.v3_level3_web_research import SCOPE as OPEN_RESEARCH, WebResea
 from evolveengine.v3_level3_run import CORE, explore
 from evolveengine import v3_level3_scoring as business
 from evolveengine.v3_level3_source import SourceContract
+from evolveengine.v3_level3_trace import TraceRecorder
 from evolveengine.v3_level3_worker_ssh import _worker_command, durable_ssh_worker, ssh_worker
 from evolveengine.v3_runner import RUNNER_FILES, need
 
@@ -258,7 +259,7 @@ def controller_pins():
                'v3_level3_evidence.py', 'v3_level3_gb10.py', 'v3_level3_worker.py',
                'v3_level3_guest.py', 'v3_level3_holdout.py', 'v3_level3_lifecycle.py', 'v3_level3_research.py',
                'v3_level3_web_research.py',
-               'v3_level3_run.py', 'v3_level3_sampling.py', 'v3_level3_trajectory.py', 'v3_level3_trajectory_lane.py', 'v3_level3_startup.py', 'v3_level3_scoring.py', 'v3_level3_source.py', 'v3_level3_upload.py', 'v3_level3_worker_ssh.py',
+               'v3_level3_run.py', 'v3_level3_sampling.py', 'v3_level3_trace.py', 'v3_level3_trajectory.py', 'v3_level3_trajectory_lane.py', 'v3_level3_startup.py', 'v3_level3_scoring.py', 'v3_level3_source.py', 'v3_level3_upload.py', 'v3_level3_worker_ssh.py',
                'v3_level3_worker_channel.py', 'v3_level3_worker_spool.py', 'v3_level3_workload.py')
     drivers = (Path(__file__).resolve(), HERE/'pi_runtime.py', HERE/'node_preflight.py', HERE/'worker_stdio.py', HERE/'render_timeline.py',
                HERE/'repeat_e0.py', HERE/'replay_e0.py', HERE/'profile_control.py', HERE/'stage_chat_timing.py', HERE/'intake_public_chat.py',
@@ -526,12 +527,14 @@ def audit(approval, *, config_path=None):
 
 class TimedWorker:
     """External measurement start/end timestamps and same-chain usage watermarks."""
-    def __init__(self, worker, directory, started, leases, api_cost):
+    def __init__(self, worker, directory, started, leases, api_cost, *, trace_recorder=None, active_segment=None):
         self.worker = worker
         self.directory = directory
         self.started = started
         self.leases = leases
         self.api_cost = api_cost
+        self.trace_recorder = trace_recorder
+        self.active_segment = active_segment or (lambda: 0)
         self.count = 0
 
     def __call__(self, operation, engine, build, cap):
@@ -580,6 +583,11 @@ class TimedWorker:
         if independent:
             recorded['independent_cold'] = True
         write(self.directory/f'{base}-reserved.json', recorded)
+        if self.trace_recorder is not None:
+            self.trace_recorder.record_worker_event(
+                segment=self.active_segment(), phase='reserved', order=self.count,
+                operation=operation, engine=engine.digest, pair_index=pair_index,
+            )
         try:
             if sample is not None:
                 result=self.worker.sampling(engine,build,cap,sample)
@@ -598,9 +606,20 @@ class TimedWorker:
         except BaseException as exc:
             write(self.directory/f'{base}-transport.json', dict(settlement='uncertain', error=type(exc).__name__,
                   elapsed_ms=round((monotonic()-self.started)*1000)))
+            if self.trace_recorder is not None:
+                self.trace_recorder.record_worker_event(
+                    segment=self.active_segment(), phase='uncertain', order=self.count,
+                    operation=operation, engine=engine.digest, status='uncertain', pair_index=pair_index,
+                )
             raise
         write(self.directory/f'{base}-transport.json', dict(result_sha256=digest(canonical(asdict(result))),
               evidence=result.evidence, elapsed_ms=round((monotonic()-self.started)*1000)))
+        if self.trace_recorder is not None:
+            self.trace_recorder.record_worker_event(
+                segment=self.active_segment(), phase='settled', order=self.count,
+                operation=operation, engine=engine.digest, status=result.status,
+                evidence=result.evidence, build=result.build, node_ms=result.node_ms, pair_index=pair_index,
+            )
         return result
 
     def verify(self, result):
@@ -769,6 +788,8 @@ def execute(output, approval, archive, tokenizer, corpus_path, credential, *, co
     op_records = launch_dir/'worker-operations'
     op_records.mkdir()
     start, start_utc_ns = monotonic(), time_ns()
+    trace = TraceRecorder(launch_dir / 'trace', started_utc_ns=start_utc_ns) if holdout is None else None
+    current_segment = [0]
     result, phase, verdict = None, 'worker_open', 'failed_or_interrupted'
 
     def notify(event, details):
@@ -796,6 +817,7 @@ def execute(output, approval, archive, tokenizer, corpus_path, credential, *, co
             yield observed_stream(response, directory/'stream-progress.json', attempt)
 
     def lease_factory(active_limits, segment, fragments):
+        current_segment[0] = segment
         directory = launch_dir/f'model-segment-{segment:04d}'
 
         def transport_with_progress(wire, timeout):
@@ -803,7 +825,8 @@ def execute(output, approval, archive, tokenizer, corpus_path, credential, *, co
 
         item = cfg.ExplorationLease(active_limits, transport_with_progress, counter, config['model']['context_window'],
               directory, api_cost=cost,
-              model_socket_idle_seconds=transport['relay_socket_idle_seconds'], expected_prompt_fragments=fragments)
+              model_socket_idle_seconds=transport['relay_socket_idle_seconds'], expected_prompt_fragments=fragments,
+              trace_recorder=trace, segment=segment)
         if objective:
             item.require_full_generation_window = False
             item.minimum_generation = config['model']['minimum_generation_tokens']
@@ -815,13 +838,17 @@ def execute(output, approval, archive, tokenizer, corpus_path, credential, *, co
         return sandbox(PI, contract, engine, current, runtime, profile, system_for(config), prompt, gateway,
                        seconds=seconds, draft=draft, on_interrupt=worker.interrupt,
                        resources=config.get('guest_resources') if objective else None,
-                       dependencies=launch_dir/'run'/'harness-assets' if continuous else None)
+                       dependencies=launch_dir/'run'/'harness-assets' if continuous else None,
+                       trace_recorder=trace, segment=current_segment[0])
 
     try:
         connect_worker = durable_ssh_worker if continuous else ssh_worker
         with connect_worker(contract, credential=credential, **worker_args) as worker:
             phase = 'run'
-            result = explore(launch_dir/'run', contract, TimedWorker(worker, op_records, start, leases, cost), launch,
+            result = explore(launch_dir/'run', contract,
+                  TimedWorker(worker, op_records, start, leases, cost, trace_recorder=trace,
+                              active_segment=lambda: current_segment[0]),
+                  launch,
                   lease_factory, runtime, CONTINUOUS_PROMPT if continuous else PROMPT, limits,
                   node_ms=lease['node_ms'], calls=lease['jobs'],
                   reservations=lease['max_per_op'], research=research, holdout_review=holdout,
@@ -840,6 +867,8 @@ def execute(output, approval, archive, tokenizer, corpus_path, credential, *, co
         verdict = 'operator_interrupted'
         raise
     finally:
+        if trace is not None:
+            trace.close(timeout=5.0)
         gpu = worker_cost(result, launch_dir/'run/trajectory.sqlite3')
         write(launch_dir/'settlement.json', dict(status=verdict, last_phase=phase, api_cost=cost.snapshot(),
               elapsed_ms=round((monotonic()-start)*1000), model_requests=sum(len(x.rows) for x in leases),

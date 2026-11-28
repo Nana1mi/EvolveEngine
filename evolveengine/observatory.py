@@ -9,9 +9,10 @@ import re
 import sqlite3
 import threading
 from time import monotonic
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from . import observatory_data as projection
+from . import observatory_detail as detail
 
 ROOT = Path(__file__).resolve().parents[1]
 ARCHIVE = ROOT / 'experiments/spark26_gguf/level3/evidence/exploration-results-20261125.json'
@@ -27,6 +28,16 @@ HEADERS = dict(**{'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-re
 
 def encode(doc):
     return json.dumps(doc, separators=(',', ':'), ensure_ascii=True, allow_nan=False, sort_keys=True).encode('ascii')
+
+
+def _read_published_bundle_json(bundle_root: Path, *parts: str, cap: int = 16 << 20):
+    path = projection.safe(bundle_root, *parts)
+    if not path.is_file():
+        raise LookupError('published artifact unavailable')
+    raw = path.read_bytes()
+    if len(raw) > cap:
+        raise LookupError('published artifact too large')
+    return json.loads(raw)
 
 
 class Store:
@@ -46,6 +57,18 @@ class Store:
         # Listing never reads a private run. Status is in its own sanitized snapshot.
         return [dict(id=k, label=k.replace('-', ' ').upper(), mode='controller') for k in (*self.live, *self.published)] + [
             {k: row[k] for k in ('id', 'label', 'mode')} for row in self.archive.values()]
+
+    def _bundle_root(self, name) -> Path | None:
+        if name not in self.published:
+            return None
+        snap_path = self.published[name]
+        bundle = snap_path.parent / (name + '.bundle')
+        try:
+            if bundle.is_dir() and bundle.resolve() == bundle.absolute():
+                return bundle.resolve()
+        except OSError:
+            return None
+        return None
 
     def published_snapshot(self, name):
         # Only a trusted producer may populate these explicitly configured files.
@@ -84,6 +107,132 @@ class Store:
             result = self.payload(out)
             self.cache[name] = (monotonic(), result)
             return result
+
+    def trace(self, name, **params):
+        if name in self.live:
+            return detail.trace_view(self.live[name], **params)
+        bundle = self._bundle_root(name)
+        if bundle is not None:
+            events, _ = detail._read_trace_events(bundle)
+            turns = detail._group_turns(bundle, events)
+            segments = sorted({t['segment'] for t in turns})
+            all_tools = sorted({(tc.get('rpc_operation') or tc.get('tool')) for t in turns for tc in t['tools'] if (tc.get('rpc_operation') or tc.get('tool'))})
+            q_lower = (params.get('query') or '').strip().lower()
+            filtered = []
+            for t in turns:
+                if params.get('segment') is not None and t['segment'] != params['segment']:
+                    continue
+                if params.get('errors_only') and not t['has_error']:
+                    continue
+                if params.get('only_candidates') and not t['is_candidate_turn']:
+                    continue
+                if params.get('engine') and params['engine'] not in t['engines']:
+                    continue
+                if params.get('tool') and not any(tc.get('tool') == params['tool'] or tc.get('rpc_operation') == params['tool'] for tc in t['tools']):
+                    continue
+                if q_lower:
+                    hay = [t['id'], (t.get('model') or {}).get('content_preview', ''), ' '.join(t['engines'])]
+                    for tc in t['tools']:
+                        hay.extend([str(tc.get(k) or '') for k in ('tool', 'rpc_operation', 'path', 'args_preview', 'result_preview')])
+                    if q_lower not in ' '.join(hay).lower():
+                        continue
+                filtered.append(t)
+            offset = max(0, int(params.get('offset') or 0))
+            limit = max(1, min(100, int(params.get('limit') or 40)))
+            return {'has_trace_content': bool(events), 'total_turns': len(turns), 'matched_turns': len(filtered),
+                    'offset': offset, 'limit': limit, 'segments': segments, 'tools': all_tools,
+                    'turns': filtered[offset:offset + limit]}
+        return {'has_trace_content': False, 'total_turns': 0, 'matched_turns': 0, 'offset': 0, 'limit': 40,
+                'segments': [], 'tools': [], 'turns': []}
+
+    def blob(self, name, blob_sha):
+        if name in self.live:
+            return detail.read_run_blob(self.live[name], blob_sha)
+        bundle = self._bundle_root(name)
+        if bundle is not None:
+            if not detail.HEX64.fullmatch(blob_sha):
+                raise LookupError('invalid blob digest')
+            _, referenced = detail._read_trace_events(bundle)
+            if blob_sha not in referenced:
+                raise LookupError('blob does not belong to this run')
+            return {'id': blob_sha, 'content': detail._read_blob_raw(bundle, blob_sha)}
+        raise LookupError('blob unavailable for this run')
+
+    def candidate(self, name, engine_sha):
+        if name in self.live:
+            return detail.candidate_detail(self.live[name], name, engine_sha)
+        bundle = self._bundle_root(name)
+        if bundle is not None and detail.HEX64.fullmatch(engine_sha):
+            return _read_published_bundle_json(bundle, 'candidates', f'{engine_sha}.json')
+        raise LookupError('candidate detail unavailable for this run')
+
+    def waterfall(self, name):
+        if name in self.live:
+            return detail.waterfall_view(self.live[name], name)
+        bundle = self._bundle_root(name)
+        if bundle is not None:
+            try:
+                return _read_published_bundle_json(bundle, 'waterfall.json')
+            except LookupError:
+                pass
+        return {'total_wall_ms': 0.0, 'breakdown': {}, 'lanes': [], 'spans': []}
+
+    def research(self, name):
+        if name in self.live:
+            return detail.research_view(self.live[name])
+        bundle = self._bundle_root(name)
+        if bundle is not None:
+            try:
+                return _read_published_bundle_json(bundle, 'research.json')
+            except LookupError:
+                pass
+        return {'available': False, 'searches': [], 'fetches': [], 'pages': [], 'reuses': []}
+
+    def research_page(self, name, page_id):
+        if name in self.live:
+            return detail.read_research_page(self.live[name], page_id)
+        bundle = self._bundle_root(name)
+        if bundle is not None and detail.HEX64.fullmatch(page_id):
+            return _read_published_bundle_json(bundle, 'research-pages', f'{page_id}.json')
+        raise LookupError('research page unavailable')
+
+    def harness(self, name, left=None, right=None):
+        if name in self.live:
+            return detail.harness_view(self.live[name], name, left=left, right=right)
+        bundle = self._bundle_root(name)
+        if bundle is not None:
+            try:
+                return _read_published_bundle_json(bundle, 'harness.json')
+            except LookupError:
+                pass
+        return {'active_harness': None, 'loaded_harness': None, 'versions': [], 'diff_left': None, 'diff_right': None, 'diff': []}
+
+    def context(self, name):
+        if name in self.live:
+            return detail.context_growth_view(self.live[name])
+        bundle = self._bundle_root(name)
+        if bundle is not None:
+            try:
+                return _read_published_bundle_json(bundle, 'context.json')
+            except LookupError:
+                pass
+        # Fallback for archives/snapshots: derive from model_request events if present
+        snap = json.loads(self.snapshot(name)[1])
+        pts = []
+        idx = 0
+        for e in snap.get('events', []):
+            if e.get('kind') == 'model_request':
+                idx += 1
+                inp = e.get('input_tokens')
+                hit = e.get('cache_hit_tokens')
+                pts.append({
+                    'index': idx, 'segment': e.get('session'), 'attempt': e.get('attempt'), 'at_ms': e.get('at_ms'),
+                    'input_tokens': inp, 'cache_hit_tokens': hit, 'cache_miss_tokens': e.get('cache_miss_tokens'),
+                    'cache_hit_rate': (hit / inp) if (inp and hit is not None and inp > 0) else None,
+                    'output_tokens': e.get('output_tokens'), 'reasoning_tokens': e.get('reasoning_tokens'),
+                    'wall_ms': e.get('duration_ms'), 'first_delta_ms': e.get('first_delta_ms'), 'finish': e.get('finish'),
+                })
+        return {'points': pts}
 
 
 class Server(ThreadingHTTPServer):
@@ -148,6 +297,14 @@ class Handler(BaseHTTPRequestHandler):
         self.respond(encode({'error': {403: 'local same-origin access only', 404: 'not found',
                      405: 'read only', 503: 'stream unavailable'}.get(code, 'request failed')}), code=code)
 
+    def _respond_detail(self, fn):
+        try:
+            return self.respond(encode(fn()))
+        except PermissionError:
+            return self.fail(403)
+        except (LookupError, ValueError):
+            return self.fail(404)
+
     def route(self):
         port = self.server.server_port
         hosts = {f'127.0.0.1:{port}', f'localhost:{port}'}
@@ -165,20 +322,74 @@ class Handler(BaseHTTPRequestHandler):
                 or self.headers.get('Content-Length', '0') != '0'):
             return self.fail(405)
         url = urlsplit(self.path)
-        if url.scheme or url.netloc or (url.query and url.path != '/'):
+        if url.scheme or url.netloc:
             return self.fail(404)
         path = url.path
+        allow_query = (path == '/' or bool(re.fullmatch(r'/api/runs/[a-z0-9][a-z0-9_-]{0,47}/(?:trace|harness)', path)))
+        if url.query and not allow_query:
+            return self.fail(404)
         if path == '/api/runs':
             return self.respond(encode(dict(schema_version=1, runs=self.server.store.runs())))
-        if match := re.fullmatch(r'/api/runs/([a-z0-9][a-z0-9_-]{0,47})/(snapshot|events)', path):
+        if match := re.fullmatch(r'/api/runs/([a-z0-9][a-z0-9_-]{0,47})/(snapshot|events|trace|waterfall|research|harness|context)', path):
             name, endpoint = match.groups()
             if not self.server.store.contains(name):
                 return self.fail(404)
             if endpoint == 'snapshot':
                 return self.respond(self.server.store.snapshot(name)[1])
-            if self.command != 'GET':
-                return self.fail(405)
-            return self.stream(name)
+            if endpoint == 'events':
+                if self.command != 'GET':
+                    return self.fail(405)
+                return self.stream(name)
+            if endpoint == 'trace':
+                qs = parse_qs(url.query, keep_blank_values=False)
+                if not set(qs) <= {'segment', 'tool', 'q', 'engine', 'errors', 'candidates', 'offset', 'limit'}:
+                    return self.fail(404)
+                try:
+                    seg = int(qs['segment'][0]) if 'segment' in qs else None
+                    offset = int(qs['offset'][0]) if 'offset' in qs else 0
+                    limit = int(qs['limit'][0]) if 'limit' in qs else 40
+                except ValueError:
+                    return self.fail(404)
+                eng = qs['engine'][0] if 'engine' in qs else None
+                if eng is not None and not detail.HEX64.fullmatch(eng):
+                    return self.fail(404)
+                return self._respond_detail(lambda: self.server.store.trace(
+                    name, segment=seg, tool=qs['tool'][0][:64] if 'tool' in qs else None,
+                    query=qs['q'][0][:160] if 'q' in qs else None, engine=eng,
+                    errors_only=qs.get('errors', ['0'])[0] in ('1', 'true'),
+                    only_candidates=qs.get('candidates', ['0'])[0] in ('1', 'true'),
+                    offset=offset, limit=limit,
+                ))
+            if endpoint == 'waterfall':
+                return self._respond_detail(lambda: self.server.store.waterfall(name))
+            if endpoint == 'research':
+                return self._respond_detail(lambda: self.server.store.research(name))
+            if endpoint == 'harness':
+                qs = parse_qs(url.query, keep_blank_values=False)
+                if not set(qs) <= {'left', 'right'}:
+                    return self.fail(404)
+                left = qs['left'][0] if 'left' in qs else None
+                right = qs['right'][0] if 'right' in qs else None
+                if (left and not detail.HEX64.fullmatch(left)) or (right and not detail.HEX64.fullmatch(right)):
+                    return self.fail(404)
+                return self._respond_detail(lambda: self.server.store.harness(name, left=left, right=right))
+            if endpoint == 'context':
+                return self._respond_detail(lambda: self.server.store.context(name))
+        if match := re.fullmatch(r'/api/runs/([a-z0-9][a-z0-9_-]{0,47})/blobs/([0-9a-f]{64})', path):
+            name, blob_sha = match.groups()
+            if not self.server.store.contains(name):
+                return self.fail(404)
+            return self._respond_detail(lambda: self.server.store.blob(name, blob_sha))
+        if match := re.fullmatch(r'/api/runs/([a-z0-9][a-z0-9_-]{0,47})/candidates/([0-9a-f]{64})/detail', path):
+            name, eng_sha = match.groups()
+            if not self.server.store.contains(name):
+                return self.fail(404)
+            return self._respond_detail(lambda: self.server.store.candidate(name, eng_sha))
+        if match := re.fullmatch(r'/api/runs/([a-z0-9][a-z0-9_-]{0,47})/research/pages/([0-9a-f]{64})', path):
+            name, page_id = match.groups()
+            if not self.server.store.contains(name):
+                return self.fail(404)
+            return self._respond_detail(lambda: self.server.store.research_page(name, page_id))
         if path == '/':
             name = 'index.html'
         elif re.fullmatch(r'/assets/[A-Za-z0-9_.-]+\.(?:js|css|woff2|svg)', path):

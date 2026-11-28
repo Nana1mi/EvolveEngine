@@ -1,19 +1,31 @@
 """Allowlisted projection of trusted controller receipts for RSI Observatory."""
+from contextlib import closing
 from datetime import datetime
 from hashlib import sha256
 import json
-from math import isclose
+from math import exp, isclose, isfinite, log, sqrt
 from pathlib import Path
 import re
 import sqlite3
-from contextlib import closing
+from statistics import mean, stdev
 
 from .schema import canonical, digest as object_digest
-from .v3_level3_scoring import weighted_score, weights_for
+from .v3_level3_scoring import (
+    GUARDRAIL_KEYS, MIN_PAIRS, P95_ITL_RELAXED_FLOOR, PRECISION_TARGET,
+    T95_DF5, WORKBUDDY_V2_PRIMARY_SCENES, WORKBUDDY_V2_VERSION,
+    weighted_score, weights_for,
+)
 
 SCENES = ('W1', 'W2', 'W3', 'W4')
-METRICS = ('output_toks_per_s', 'tpot_ms', 'ttft_ms', 'e2e_ms', 'dev_score',
-           'share_ge_40_tps', 'share_ge_50_tps', 'p95_itl_ms', 'unfinished_count')
+ALL_SCENES = ('W1', 'W2', 'W3', 'W4', 'W5')
+ALL_RATIO_KEYS = ('W1', 'W2', 'W3', 'W4', 'W4_hot', 'W4_cold', 'W5')
+METRICS = (
+    'output_toks_per_s', 'tpot_ms', 'ttft_ms', 'e2e_ms', 'dev_score',
+    'share_ge_40_tps', 'share_ge_50_tps', 'p95_itl_ms', 'unfinished_count',
+    'cached_tokens_min', 'cached_tokens_mean',
+    'w4_hot_decode_tps', 'w4_cold_ttft_ms', 'w4_cold_e2e_ms', 'hot_cached_tokens_min',
+)
+G64K_METRICS = ('ttft_ms', 'decode_tokens_per_s', 'tpot_ms', 'e2e_ms', 'unfinished_count', 'cached_tokens_min')
 WORKER_OPS = frozenset('develop_build develop_quality develop_measure develop_profile develop_diagnostic'.split())
 STATUSES = frozenset('''built valid observed violation insufficient_evidence build_failed
     cleanup_uncertain timeout timed_out uncertain completed_non_scoring incomplete_non_scoring
@@ -27,17 +39,26 @@ STATUSES = frozenset('''built valid observed violation insufficient_evidence bui
     worker_transport agent_delivery runtime_failure process_exit launcher_failed
     exhausted consecutive_failures lease_overrun wall_clock resource_exhausted
     repeated_failure_paused infrastructure_repair worker_fault operator_pause operator_pause_after_segment unplanned_outage
-    context_generation_window network_failure guest_failure worker_failure worker_uncertain'''.split())
+    context_generation_window network_failure guest_failure worker_failure worker_uncertain
+    eligible regression inconclusive needs_repeats needs_balanced_order reference'''.split())
 FAILURES = STATUSES & frozenset('''violation insufficient_evidence build_failed cleanup_uncertain
     timeout timed_out uncertain output_replay_mismatch timed_output_mismatch workload_drift
     incomplete_non_scoring insufficient_budget generation_truncated length upstream_transport
     upstream_http_error usage_uncertain input_reservation_rejected request_rejected
     failed_or_interrupted operator_interrupted runtime_failure process_exit launcher_failed
     lease_overrun wall_clock resource_exhausted rejected repeated_failure_paused context_generation_window
-    network_failure guest_failure worker_failure worker_uncertain'''.split())
+    network_failure guest_failure worker_failure worker_uncertain regression'''.split())
 REPLAY_CASES = frozenset('numeric_32 natural_eos_4 autoregressive_full_vocab mixed_tail_absolute paired_cancel_numeric'.split())
-CASES = REPLAY_CASES | {'sampling_three_bin'}
-TOOLS = frozenset('read write edit bash grep find ls develop_build develop_quality develop_measure develop_profile develop_diagnostic candidate_submit harness_submit harness_activate harness_asset_save artifact_query checkpoint_save research_search research_read research_fetch deliver handoff'.split())
+LONG_CTX_CASES = frozenset(('long_context_logprob_16k_64k',))
+OPAQUE_QUALITY_CASES = ('numeric_32', 'natural_eos_4', 'long_context_logprob_16k_64k')
+CASES = REPLAY_CASES | {'sampling_three_bin'} | LONG_CTX_CASES
+TOOLS = frozenset('''read write edit bash grep find ls ee_rpc
+    develop_build develop_quality develop_measure develop_profile develop_diagnostic develop_stress
+    diagnostic_submit confirm_performance confirm_cold_build submit_job job_status job_cancel
+    candidate_submit harness_submit harness_activate harness_status harness_asset_save
+    harness_asset_put harness_asset_read harness_asset_restore dependency_fetch
+    artifact_query checkpoint_save save_checkpoint continue_session finish_exploration facts
+    research_search research_read research_fetch research_reuse deliver handoff'''.split())
 CONTINUATIONS = frozenset(('initial', 'ordinary', 'recovery', 'stopped', 'delivered', 'nominated'))
 PINS = re.compile(r'[0-9a-f]{64}\Z')
 RUN_ID = re.compile(r'[a-z0-9][a-z0-9_-]{0,47}\Z')
@@ -66,7 +87,9 @@ def num(value):
     # Decimal strings are used by the budget ledger. Reject arbitrary strings.
     if isinstance(value, str) and len(value) <= 36 and re.fullmatch(r'\d+(?:\.\d+)?', value):
         value = float(value)
-    return value if type(value) in (int, float) and 0 <= value <= 10**20 else None
+    if type(value) is int:
+        return value if 0 <= value <= 10**20 else None
+    return value if type(value) is float and isfinite(value) and 0 <= value <= 10**20 else None
 
 
 def ts(value):
@@ -98,15 +121,100 @@ def read_json(path, cap=4 << 20):
         return {}
 
 
+def is_eligible_run(root):
+    """True only for explicitly non-holdout engineering exploration runs."""
+    registration = read_json(safe(root, 'registration.json'))
+    if not registration:
+        return False, registration, {}
+    settlement = read_json(safe(root, 'settlement.json'))
+    if (registration.get('full_acceptance') is not False or
+            registration.get('holdout_review_sha256') is not None or
+            registration.get('scope') != 'one_engineering_exploration_without_holdout' or
+            settlement.get('holdout_released') is True):
+        return False, registration, settlement
+    return True, registration, settlement
+
+
 def metrics(value):
     v = mapping(value)
     return {s: {k: val for k in METRICS if (val := num(mapping(v.get(s)).get(k))) is not None}
-            for s in SCENES if isinstance(v.get(s), dict)}
+            for s in ALL_SCENES if isinstance(v.get(s), dict)}
 
 
 def ratios(value):
     v = mapping(value)
-    return {s: x for s in SCENES if (x := num(v.get(s))) is not None}
+    return {s: x for s in ALL_RATIO_KEYS if (x := num(v.get(s))) is not None}
+
+
+def guardrail_ratios_proj(value):
+    v = mapping(value)
+    out = {k: x for k in GUARDRAIL_KEYS if (x := num(v.get(k))) is not None}
+    return out or None
+
+
+def guardrails_proj(value):
+    v = mapping(value)
+    g64 = mapping(v.get('G64K'))
+    if not g64:
+        return None
+    out = {k: val for k in G64K_METRICS if (val := num(g64.get(k))) is not None}
+    return {'G64K': out} if out else None
+
+
+def quality_detail_proj(data, cases):
+    """Project allowlisted quality metrics/verdicts without leaking raw outputs."""
+    detail = {}
+    traj = mapping(data.get('trajectory_screen'))
+    if traj:
+        maxima = {k: v for k, raw in mapping(traj.get('maxima')).items()
+                  if isinstance(k, str) and len(k) <= 48 and (v := num(raw)) is not None}
+        failed = [k for k in (traj.get('failed') or []) if isinstance(k, str) and len(k) <= 48]
+        limits = {k: v for k, raw in mapping(traj.get('limits')).items()
+                  if isinstance(k, str) and len(k) <= 48 and (v := num(raw)) is not None}
+        detail['trajectory_screen'] = {
+            'status': status(traj.get('status')),
+            'maxima': maxima,
+            'failed': failed,
+            **({'limits': limits} if limits else {}),
+        }
+    samp = mapping(data.get('sampling_screen'))
+    if samp:
+        samp_out = {'status': status(samp.get('status'))}
+        for k in ('max_tv', 'threshold', 'p_value', 'delta', 'statistic'):
+            if (v := num(samp.get(k))) is not None:
+                samp_out[k] = v
+        detail['sampling_screen'] = samp_out
+    opaque = [k for k in OPAQUE_QUALITY_CASES if k in cases]
+    if opaque:
+        detail['verdict_only_cases'] = opaque
+    return detail or None
+
+
+def scoring_policy_proj(raw):
+    cfg = mapping(raw)
+    if not cfg:
+        return None
+    version = cfg.get('version')
+    if not isinstance(version, str) or len(version) > 64:
+        return None
+    wp = {k: v for k, raw_v in mapping(cfg.get('weight_percent')).items()
+          if k in ALL_RATIO_KEYS and (v := num(raw_v)) is not None}
+    sf = {k: v for k, raw_v in mapping(cfg.get('scene_floors')).items()
+          if k in ALL_RATIO_KEYS and (v := num(raw_v)) is not None}
+    gf = {k: v for k, raw_v in mapping(cfg.get('guardrail_floors')).items()
+          if k in GUARDRAIL_KEYS and (v := num(raw_v)) is not None}
+    pt = {k: v for k, raw_v in mapping(cfg.get('scene_precision_targets')).items()
+          if k in ALL_RATIO_KEYS and (v := num(raw_v)) is not None}
+    sla = [v for raw_v in (cfg.get('sla_targets_tps') or []) if (v := num(raw_v)) is not None]
+    return {
+        'version': version,
+        'weight_percent': wp or dict(weights_for(version)),
+        'scene_floors': sf,
+        'guardrail_floors': gf,
+        'scene_precision_targets': pt,
+        'minimum_pairs': num(cfg.get('minimum_pairs')) or MIN_PAIRS,
+        'sla_targets_tps': sla,
+    }
 
 
 def event(identity, kind, source='host', **kw):
@@ -119,8 +227,9 @@ def sha_bytes(blob):
 
 def empty(run_id, label, mode):
     return dict(schema_version=1, id=run_id, label=label, mode=mode, status='awaiting_receipts',
-                delivery=None, baseline=None, active_harness=None, loaded_harness=None, points=[], events=[],
-                versions=[], resources={}, limits={}, notices=[], source_ref=None)
+                delivery=None, baseline=None, active_harness=None, loaded_harness=None,
+                scoring=None, has_trace_content=False, build_summaries=[],
+                points=[], events=[], versions=[], resources={}, limits={}, notices=[], source_ref=None)
 
 
 def archive_runs(path):
@@ -134,7 +243,8 @@ def archive_runs(path):
         out = empty(run_id, f'Level 3 archive / {n:02}', 'archive')
         out.update(status=status(row.get('terminal_status')) or 'settlement_recorded',
                    stop_cause=status(row.get('stop_cause')), source_ref=sha_bytes(payload),
-                   active_harness=pin(row.get('active_harness')), baseline=BASE)
+                   active_harness=pin(row.get('active_harness')), baseline=BASE,
+                   has_trace_content=False)
         r, m = mapping(row.get('resources')), mapping(row.get('model'))
         out['resources'] = dict(wall_ms=times(r.get('wall_minutes'), 60000), node_ms=times(r.get('gpu_node_minutes'), 60000),
             ledger_rmb=num(r.get('local_api_worst_case_reservation_ledger_rmb')), input_tokens=num(m.get('input_tokens')),
@@ -163,7 +273,7 @@ def archive_runs(path):
             cause = status(row.get('stop_cause'))
             out['events'].append(event('run/settlement', 'run_settlement', status=out['status'], cause=cause,
                                        failure=cause in FAILURES))
-        out['notices'] = ['Archive summary only: per-point clocks, failed candidates, tool trace and load evidence are unavailable.']
+        out['notices'] = ['Archive summary only: trace content not recorded (per-point clocks, failed candidates, tool trace and load evidence are unavailable).']
         result[run_id] = out
     return result
 
@@ -235,6 +345,185 @@ def clock(start, end, node):
         ledger_rmb=num(ledger.get('total_charged_rmb')), node_ms=node).items() if v is not None}
 
 
+def compute_build_summaries(points, scoring_cfg):
+    """Aggregate repeated matched pairs per (engine, build). Only emit CIs at >= MIN_PAIRS."""
+    if not points:
+        return []
+    policy = mapping(scoring_cfg)
+    version = policy.get('version')
+    wb_v2 = version == WORKBUDDY_V2_VERSION
+    weights = policy.get('weight_percent') or (weights_for(version) if version else None)
+    floors = mapping(policy.get('scene_floors'))
+    g_floors = mapping(policy.get('guardrail_floors'))
+    prec_targets = mapping(policy.get('scene_precision_targets'))
+    min_pairs = int(policy.get('minimum_pairs') or MIN_PAIRS)
+    primary_scenes = WORKBUDDY_V2_PRIMARY_SCENES if wb_v2 else ('W3', 'W4') if version == 'workbuddy-agent-serving-v1' else ('W1', 'W2')
+
+    grouped = {}
+    for pt in points:
+        if pt.get('origin') == 'operator_replay':
+            continue
+        key = (pt['engine'], pt.get('build') or '')
+        grouped.setdefault(key, []).append(pt)
+
+    summaries = []
+    for (eng, bld), pts in grouped.items():
+        seen_pairs = set()
+        valid_pts = []
+        for pt in pts:
+            pr = pt.get('pair')
+            if pr is not None and pr in seen_pairs:
+                continue
+            if pr is not None:
+                seen_pairs.add(pr)
+            valid_pts.append(pt)
+        count = len(valid_pts)
+        ratio_keys = list(weights.keys()) if weights else sorted({k for pt in valid_pts for k in pt.get('ratios', {})})
+        scene_ratios = {}
+        intervals = {}
+        below_floor = []
+        uncertain = []
+        for k in ratio_keys:
+            vals = [pt['ratios'][k] for pt in valid_pts if isinstance(pt.get('ratios'), dict) and (pt['ratios'].get(k) or 0) > 0]
+            if not vals:
+                continue
+            logs = [log(v) for v in vals]
+            center = mean(logs)
+            scene_ratios[k] = exp(center)
+            if len(logs) >= min_pairs:
+                half = T95_DF5 * stdev(logs) / sqrt(len(logs))
+                lo, hi = exp(center - half), exp(center + half)
+                intervals[k] = [lo, hi]
+                fl = floors.get(k)
+                target = prec_targets.get(k, PRECISION_TARGET)
+                if fl is not None:
+                    if hi < fl:
+                        below_floor.append(k)
+                    elif lo < fl or (k in primary_scenes and half > log(target)):
+                        uncertain.append(k)
+
+        g_ratios = {}
+        g_intervals = {}
+        unfinished_any = any((pt.get('unfinished_count') or 0) > 0 for pt in valid_pts)
+        if wb_v2 or any(pt.get('guardrail_ratios') for pt in valid_pts):
+            if unfinished_any:
+                below_floor.append('unfinished_count')
+            for gk in GUARDRAIL_KEYS:
+                vals = [pt['guardrail_ratios'][gk] for pt in valid_pts
+                        if isinstance(pt.get('guardrail_ratios'), dict) and (pt['guardrail_ratios'].get(gk) or 0) > 0]
+                if not vals:
+                    continue
+                logs = [log(v) for v in vals]
+                center = mean(logs)
+                g_ratios[gk] = exp(center)
+                if len(logs) >= min_pairs:
+                    half = T95_DF5 * stdev(logs) / sqrt(len(logs))
+                    lo, hi = exp(center - half), exp(center + half)
+                    g_intervals[gk] = [lo, hi]
+                    fl = g_floors.get(gk, P95_ITL_RELAXED_FLOOR if gk == 'p95_itl' else None)
+                    if fl is not None:
+                        if hi < fl:
+                            below_floor.append(gk)
+                        elif lo < fl:
+                            uncertain.append(gk)
+
+        agg = None
+        if weights and set(scene_ratios) == set(weights):
+            agg = weighted_score(scene_ratios, weights)
+        elif scene_ratios:
+            agg = exp(sum(log(v) for v in scene_ratios.values()) / len(scene_ratios))
+
+        if count < min_pairs:
+            st = 'needs_repeats'
+        elif below_floor:
+            st = 'regression'
+        elif uncertain:
+            st = 'inconclusive'
+        else:
+            st = 'eligible'
+
+        summaries.append({
+            'engine': eng,
+            'iteration': valid_pts[0].get('iteration'),
+            'build': bld or None,
+            'pairs': count,
+            'minimum_pairs': min_pairs,
+            'ci_available': count >= min_pairs,
+            'status': st,
+            'weighted_score': agg,
+            'scene_ratios': scene_ratios,
+            'intervals': intervals if count >= min_pairs else {},
+            'guardrail_ratios': g_ratios or None,
+            'guardrail_intervals': g_intervals if (count >= min_pairs and g_intervals) else {},
+            'below_floor': below_floor,
+            'uncertain_scenes': uncertain,
+        })
+    return summaries
+
+
+def _has_live_trace(root):
+    trace_dir = root / 'trace'
+    try:
+        trace_dir = safe(root, 'trace')
+    except ValueError:
+        return False
+    if not trace_dir.is_dir():
+        return False
+    return any(trace_dir.glob('segment-*.jsonl'))
+
+
+def _collect_live_pi_tools(out, root):
+    """Read live Pi tool spans from trace/segment-*.jsonl when result.json has none."""
+    if any(e.get('kind') == 'pi_tool' for e in out['events']):
+        return
+    try:
+        trace_dir = safe(root, 'trace')
+    except ValueError:
+        return
+    if not trace_dir.is_dir():
+        return
+    opened = {}
+    count = 0
+    for seg_file in sorted(trace_dir.glob('segment-*.jsonl')):
+        if not re.fullmatch(r'segment-\d{4,6}\.jsonl', seg_file.name):
+            continue
+        try:
+            raw_lines = seg_file.read_bytes().splitlines()
+        except OSError:
+            continue
+        for idx, raw in enumerate(raw_lines):
+            if count >= 4000:
+                return
+            try:
+                rec = mapping(json.loads(raw))
+            except (ValueError, RecursionError):
+                continue
+            kind = rec.get('kind')
+            tool = rec.get('tool')
+            hashed = pin(rec.get('call_sha256'))
+            stamp = num(rec.get('utc_ns'))
+            seg = num(rec.get('segment'))
+            if not allowed(tool, TOOLS) or not hashed or stamp is None or stamp / 1e6 > MAX_EPOCH_MS:
+                continue
+            if kind == 'pi_tool_start':
+                opened[(seg, hashed)] = (stamp, rec.get('rpc_operation'))
+            elif kind == 'pi_tool_end':
+                st_info = opened.pop((seg, hashed), None)
+                start_ns = st_info[0] if st_info else None
+                dur = num(rec.get('duration_ms'))
+                if dur is None and start_ns is not None and stamp >= start_ns:
+                    dur = (stamp - start_ns) / 1e6
+                op = rec.get('rpc_operation') if isinstance(rec.get('rpc_operation'), str) and rec['rpc_operation'] in TOOLS else tool
+                out['events'].append(event(
+                    f'pi-live/{int(seg or 0)}/{idx}', 'pi_tool', session=int(seg) if seg is not None else None,
+                    operation=op, at_ms=(start_ns or stamp) / 1e6, duration_ms=dur,
+                    evidence=hashed, engine=pin(rec.get('engine')),
+                    failure=bool(rec.get('is_error')) or None,
+                    wall_ms=num(rec.get('elapsed_ms')),
+                ))
+                count += 1
+
+
 def local_run(root, run_id):
     out = empty(run_id, run_id.replace('-', ' ').upper(), 'controller')
     registration = read_json(safe(root, 'registration.json'))
@@ -252,6 +541,8 @@ def local_run(root, run_id):
         return out
     out['status'] = 'no_terminal_receipt'
     out['source_ref'] = pin(registration.get('approval_sha256'))
+    out['scoring'] = scoring_policy_proj(registration.get('business_scoring'))
+    out['has_trace_content'] = _has_live_trace(root)
     limit = mapping(registration.get('limits'))
     out['limits'] = {k: v for k in ('input', 'output', 'per_turn_output', 'turns', 'wall_ms') if (v := num(limit.get(k))) is not None}
     rows, objects, clipped = journal(safe(root, 'run', 'trajectory.sqlite3'))
@@ -265,7 +556,9 @@ def local_run(root, run_id):
         op = row.get('operation')
         engine, pair = pin(row.get('engine')), num(row.get('measurement_pair'))
         e = None
-        if op == 'engine_registered' and engine:
+        if key == 'business_scoring/policy' and out['scoring'] is None:
+            out['scoring'] = scoring_policy_proj(row)
+        elif op == 'engine_registered' and engine:
             iteration = engine_version(out, seen, engine, pin(row.get('parent')))
             e = event(identity, 'engine_registered', engine=engine, parent=pin(row.get('parent')), iteration=iteration)
         elif op == 'worker_reserved' and allowed(row.get('worker_operation'), WORKER_OPS) and engine:
@@ -295,12 +588,13 @@ def local_run(root, run_id):
                     end = {}
                 info = clock(start, end, node if node_known else None)
                 q = {k: v for k, v in mapping(data.get('case_outcomes')).items() if k in CASES and status(v)}
+                q_detail = quality_detail_proj(data, q) if typ == 'develop_quality' else None
                 e = event(identity, 'worker_settled', 'verified', engine=eng, operation=typ, status=state,
                           duration_ms=runtime, evidence=receipt, build=pin(result.get('build')),
                           pair=num(data.get('measurement_pair')), wall_ms=info.get('wall_ms'),
-                          failure=state in FAILURES, cases=q or None)
+                          failure=state in FAILURES, cases=q or None, quality_detail=q_detail)
                 if typ == 'develop_measure' and state == 'observed':
-                    measured[receipt] = (e, metrics(data.get('scenes')), info)
+                    measured[receipt] = (e, metrics(data.get('scenes')), guardrails_proj(data.get('guardrails')), info)
             else:
                 unknown += 1
                 node_known = False
@@ -323,18 +617,28 @@ def local_run(root, run_id):
         elif op == 'development_comparison':
             ref, receipt = pin(row.get('reference')), pin(row.get('receipt'))
             if receipt and ref and receipt not in comparison and receipt in measured and ref in measured:
-                completed, scenes, info = measured[receipt]
-                base, baseline_scenes, _ = measured[ref]
+                completed, scenes, cand_guardrails, info = measured[receipt]
+                base, baseline_scenes, base_guardrails, _ = measured[ref]
                 if engine and completed['engine'] == engine and out['baseline'] == base['engine']:
                     aggregate = num(row.get('weighted_score'))
                     method = 'weighted_score' if aggregate is not None else 'equal_scene_geomean'
                     if aggregate is None:
                         aggregate = num(row.get('equal_scene_geomean'))
+                    g_ratios = guardrail_ratios_proj(row.get('guardrail_ratios'))
+                    unfinished = num(row.get('unfinished_count'))
                     point = dict(id=receipt, engine=engine, reference=ref, iteration=engine_version(out, seen, engine),
                                  index=len(out['points'])+1, session=session, build=completed.get('build'),
                                  pair=completed.get('pair'), aggregate=aggregate, aggregate_kind=method,
                                  ratios=ratios(row.get('scene_ratios')), scenes=scenes, reference_scenes=baseline_scenes,
                                  resources=info, provisional=row.get('gain_status')=='provisional_pending_weight_review', known_quality=True)
+                    if g_ratios:
+                        point['guardrail_ratios'] = g_ratios
+                    if cand_guardrails:
+                        point['guardrails'] = cand_guardrails
+                    if base_guardrails:
+                        point['reference_guardrails'] = base_guardrails
+                    if unfinished is not None:
+                        point['unfinished_count'] = int(unfinished)
                     out['points'].append(point)
                     comparison[receipt] = point
                     e = event(identity, 'comparison', 'verified', engine=engine, evidence=receipt, point_id=receipt,
@@ -342,11 +646,11 @@ def local_run(root, run_id):
         elif op in ('development_timing_input_mismatch', 'development_workload_drift', 'development_timed_output_mismatch', 'development_output_replay_mismatch'):
             evidence = pin(row.get('candidate'))
             e = event(identity, op, 'verified', engine=engine, evidence=evidence, status='violation', failure=True,
-                      wall_ms=measured[evidence][2].get('wall_ms') if evidence in measured else None)
+                      wall_ms=measured[evidence][3].get('wall_ms') if evidence in measured else None)
         elif op in ('checkpoint_saved', 'checkpoint_imported', 'checkpoint_import_refused'):
             e = event(identity, op, engine=engine, evidence=pin(row.get('checkpoint')), failure=op.endswith('refused'))
-        elif op in ('research_search', 'research_fetch', 'research_read'):
-            e = event(identity, 'research', operation=op, evidence=pin(row.get('response_sha256')),
+        elif op in ('research_search', 'research_fetch', 'research_read', 'research_reuse'):
+            e = event(identity, 'research', operation=op, evidence=pin(row.get('response_sha256') or row.get('receipt')),
                       request=pin(row.get('request_sha256')), bytes=num(row.get('response_bytes')), cost_rmb=num(row.get('charge_rmb')))
         elif op == 'harness_submit':
             if h := pin(row.get('version')):
@@ -401,8 +705,12 @@ def local_run(root, run_id):
                             node_ms=node if order and node_known and not reserved else None)
     model_rows = collect_model(out, root)
     collect_terminal(out, root, settlement)
+    _collect_live_pi_tools(out, root)
     collect_operator_measurements(out, root, seen)
     annotate_elapsed(out, root)
+    out['build_summaries'] = compute_build_summaries(out['points'], out['scoring'])
+    if not out['has_trace_content'] and (rows or model_rows):
+        out['notices'].append('Trace content not recorded for this run (metadata only).')
     if not model_rows:
         out['notices'].append('No projected model receipts yet.')
     return out
@@ -515,7 +823,6 @@ def collect_terminal(out, root, settlement):
                                            duration_ms=(stamp-start)/1e6, evidence=hashed))
 
 
-
 def collect_operator_measurements(out, root, seen):
     """Project the host operator's optional sidecar, bound to this approval.
 
@@ -530,6 +837,7 @@ def collect_operator_measurements(out, root, seen):
     reg_doc = read_json(safe(root, 'registration.json'))
     scoring_cfg = mapping(reg_doc.get('business_scoring'))
     run_weights = scoring_cfg.get('weight_percent') or weights_for(scoring_cfg.get('version'))
+    expected_keys = set(run_weights)
     published = {point['id'] for point in out['points']}
     for row in map(mapping, records):
         engine, receipt, build, quality, ref = (pin(row.get(key)) for key in ('engine', 'timing', 'build', 'quality', 'reference'))
@@ -542,7 +850,7 @@ def collect_operator_measurements(out, root, seen):
             continue
         scene_ratios = ratios(row.get('ratios'))
         reported = num(row.get('weighted_score'))
-        if set(scene_ratios) != set(SCENES) or min(scene_ratios.values()) <= 0 or reported is None:
+        if set(scene_ratios) != expected_keys or min(scene_ratios.values()) <= 0 or reported is None:
             continue
         score = weighted_score(scene_ratios, run_weights)
         if not isclose(score, reported, rel_tol=1e-9):

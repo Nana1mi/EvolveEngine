@@ -197,7 +197,8 @@ class ExplorationLease(narrow.NarrowLease):
     finish_reasons = narrow.NarrowLease.finish_reasons | {'insufficient_system_resource', 'aborted'}
 
     def __init__(self, limits, transport, counter, context_window, directory, *, api_cost,
-                 model_socket_idle_seconds, expected_prompt_fragments=()):
+                 model_socket_idle_seconds, expected_prompt_fragments=(),
+                 trace_recorder=None, segment=0):
         super().__init__(limits, transport, counter, expected_prompt_fragments=expected_prompt_fragments)
         self.context_window = context_window
         self.api_cost = api_cost
@@ -205,6 +206,9 @@ class ExplorationLease(narrow.NarrowLease):
         self.directory = directory
         directory.mkdir(exist_ok=False)
         self.attempts = 0
+        self.trace_recorder = trace_recorder
+        self.segment = segment
+        self._last_sse_bytes = None
 
     def _authorize_upstream(self, meta):
         path = self.directory / f'{self.attempts:04}-cost-reservation.json'
@@ -215,6 +219,8 @@ class ExplorationLease(narrow.NarrowLease):
 
     def _read(self, upstream, ceiling):
         result = super()._read(upstream, ceiling)
+        if self.trace_recorder is not None and isinstance(result[0], bytes):
+            self._last_sse_bytes = result[0]
         usage = result[1]
         if type(usage) is dict:
             total = usage.get('prompt_tokens')
@@ -235,16 +241,26 @@ class ExplorationLease(narrow.NarrowLease):
         prefix = f'{self.attempts:04}'
         start = utc_now()
         rows, rejections = len(self.rows), len(self.rejections)
+        self._last_sse_bytes = None
         p3.write_once(self.directory / f'{prefix}-start.json', dict(attempt=self.attempts, started_utc=start))
         try:
             return super().exchange(raw)
         finally:
+            ended = utc_now()
             settled = self.rows[rows] if len(self.rows) > rows else None
+            rej = self.rejections[rejections] if len(self.rejections) > rejections else None
             p3.write_once(self.directory / f'{prefix}-result.json', dict(
-                attempt=self.attempts, started_utc=start, ended_utc=utc_now(),
+                attempt=self.attempts, started_utc=start, ended_utc=ended,
                 usage=settled, estimated_rmb=estimate_rmb(settled),
-                rejection=self.rejections[rejections] if len(self.rejections) > rejections else None,
+                rejection=rej,
                 cumulative_charge=dict(input_tokens=self.spent_input, output_tokens=self.spent_output)))
+            if self.trace_recorder is not None:
+                self.trace_recorder.record_model_exchange(
+                    segment=self.segment, attempt=self.attempts, started_utc=start, ended_utc=ended,
+                    raw_request=raw if isinstance(raw, bytes) else None,
+                    raw_sse=self._last_sse_bytes, usage=settled, rejection=rej,
+                )
+            self._last_sse_bytes = None
 
 
 def run(source, output, config, limits, counter, transport, worker):
